@@ -1,0 +1,36 @@
+# Puts every pull request on the multiplayer preview, so it can be tried from the staging game hub
+# (https://game-hub-staging.rocketframe.workers.dev) without anyone running wrangler by hand.
+# Preview: https://multiplayer.bmp-preview.pages.dev  ·  The live game (GitHub Pages from main) is not touched.
+# Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+name: Multiplayer preview
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: multiplayer-preview
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    # Pull requests from forks get no secrets, so they are never deployed.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Deploy to the multiplayer preview
+        run: |
+          mkdir -p /tmp/site && rsync -a --exclude .git --exclude .github ./ /tmp/site/
+          npx --yes wrangler@4.160.0 pages deploy /tmp/site --project-name bmp-preview --branch multiplayer --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Summary
+        run: |
+          echo "Preview: https://multiplayer.bmp-preview.pages.dev (open it from https://game-hub-staging.rocketframe.workers.dev)" >> "$GITHUB_STEP_SUMMARY"
