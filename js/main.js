@@ -50,7 +50,7 @@ const statusChips = (p, club) => {
   if (p.contract <= 1 && club) out.push(`<span class="chip warn">${p.contract ? '1 yr left' : 'Expiring'}</span>`);
   return out.join(' ');
 };
-function msToMidnight() { if (app.mp) return Math.max(0, (app.mp.nextAt || 0) - app.mp.room.serverNow()); const n = new Date(Date.now() + (S()?.calendar.devOffset || 0) * 864e5); const m = new Date(n); m.setHours(24, 0, 0, 0); return m - n; }
+function msToMidnight() { if (app.mp) { const L = S()?.mp?.live; return Math.max(0, (L ? (L.phase === 'first' ? L.htCloseAt : L.ftAt) : app.mp.nextAt || 0) - app.mp.room.serverNow()); } const n = new Date(Date.now() + (S()?.calendar.devOffset || 0) * 864e5); const m = new Date(n); m.setHours(24, 0, 0, 0); return m - n; }
 function fmtDur(ms) { const s = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; }
 
 const ICONS = {
@@ -640,7 +640,8 @@ function showResults(u, opt = {}) {
 }
 
 // replay: a match the league server already played (multiplayer). No half-time changes, nothing to commit.
-function watchMatch(replay = null) {
+// live: a shared league match being played right now (first half only until half time).
+function watchMatch(replay = null, live = false) {
   const s = S(), c = me();
   const u = replay || G.prepareMatchday(s).user; if (!replay) save();
   if (!u) return;
@@ -658,7 +659,7 @@ function watchMatch(replay = null) {
         <div class="seg" id="m-cam">${[['broadcast', 'TV'], ['tactical', 'Tactical']].map(([v, l]) => `<button data-cam="${v}" class="${app.prefs.camera === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         <button class="btn small" id="m-snd" title="Stadium sound">${app.prefs.sound ? '🔊' : '🔇'}</button>
         ${app.voice.ok ? `<button class="btn small" id="m-voice" title="Commentary voice">${app.prefs.voice !== false ? '🎙️' : '🎙️✕'}</button>` : ''}
-        <button class="btn small" id="m-skip">Skip to full time</button>
+        ${live ? '' : '<button class="btn small" id="m-skip">Skip to full time</button>'}
       </div>
     </div>
     <aside class="feed"><div class="feed-h"><div class="label">${esc(Pk.cstadium(H))}</div><b>${esc(home.name)} v ${esc(away.name)}</b></div>
@@ -696,8 +697,8 @@ function watchMatch(replay = null) {
       onReplay: on => { if (on) pop.innerHTML = ''; },
       onCard: (e, name) => { pop.innerHTML = `<div class="card-pop"><i style="background:${e.kind === 'yellow' ? '#ffd400' : '#e01b24'}"></i>${esc(name)}</div>`; setTimeout(() => { pop.innerHTML = ''; }, 2400); },
       onSub: (e, outN, inN) => { pop.innerHTML = `<div class="card-pop" style="font-size:15px"><span style="color:var(--pitch)">▲ ${esc(inN)}</span><span style="color:var(--red)">▼ ${esc(outN)}</span></div>`; setTimeout(() => { pop.innerHTML = ''; }, 2400); },
-      onHalfTime: st => { setTimeout(() => vo.stop(), 2500); watchedHalf = true; if (replay) setTimeout(() => view.resume(), 2500); else halftime(el, view, u, side, st); },
-      onFullTime: st => { showStats(st); fulltime(el, view, watchedHalf && !skipped, replay); },
+      onHalfTime: st => { setTimeout(() => vo.stop(), 2500); watchedHalf = true; if (live) mpLiveHalftime(el, view, u, side, st); else if (replay) setTimeout(() => view.resume(), 2500); else halftime(el, view, u, side, st); },
+      onFullTime: st => { showStats(st); fulltime(el, view, watchedHalf && !skipped, replay || (live ? { ...u, result: view.result } : null)); },
     },
   });
   view.start();
@@ -705,11 +706,12 @@ function watchMatch(replay = null) {
   $('#m-speed', el).addEventListener('click', e => { const b = e.target.closest('[data-sp]'); if (!b) return; const v = +b.dataset.sp; view.setSpeed(v); vo.speed = v; app.prefs.speed = v; savePrefs(); $$('#m-speed button', el).forEach(x => x.classList.toggle('on', x === b)); });
   $('#m-cam', el).addEventListener('click', e => { const b = e.target.closest('[data-cam]'); if (!b) return; view.setCamera(b.dataset.cam); app.prefs.camera = b.dataset.cam; savePrefs(); $$('#m-cam button', el).forEach(x => x.classList.toggle('on', x === b)); });
   $('#m-snd', el).addEventListener('click', e => { app.prefs.sound = !app.prefs.sound; savePrefs(); if (app.prefs.sound) app.audio.enable(); else app.audio.disable(); e.currentTarget.textContent = app.prefs.sound ? '🔊' : '🔇'; });
-  $('#m-skip', el).addEventListener('click', () => { vo.stop(); skipped = !watchedHalf; $$('.overlay', el).forEach(x => x.remove()); view.skipToEnd(); });
+  $('#m-skip', el)?.addEventListener('click', () => { vo.stop(); skipped = !watchedHalf; $$('.overlay', el).forEach(x => x.remove()); view.skipToEnd(); });
   app.matchView = view;
+  if (live) app.mp.liveView = { el, view, u, side, atHalf: false, applied: false };
 }
 
-function halftime(el, view, u, side, st) {
+function halftime(el, view, u, side, st, live = false) {
   const s = S();
   const T = u.result.ht.teams[side];
   const ov = document.createElement('div'); ov.className = 'overlay';
@@ -740,6 +742,7 @@ function halftime(el, view, u, side, st) {
     if (ment !== T.mentality) changes.mentality = ment;
     if (formation !== T.formation) changes.formation = formation;
     if (subs.length) changes.subs = subs;
+    if (live) { mpSendHalftime(ov, changes); return; }
     if (Object.keys(changes).length) {
       const r = G.halftimeChange(s, changes); save();
       // the re-simulated result includes the new bench/sub events; give the viewer the new names
@@ -761,7 +764,7 @@ function fulltime(el, view, watched, replay = null) {
     if (!e.target.closest('#ft-go')) return;
     view.destroy(); el.remove(); document.body.style.overflow = '';
     app.audio.disable(); app.voice.stop();
-    if (replay) mpShowLastResult(); else finishMatchday(watched);
+    if (replay) mpShowMatchResult(replay); else finishMatchday(watched);
   });
 }
 
@@ -826,7 +829,9 @@ function mpLobbyUrl() { return app.mp.hub.origin + '/?room=' + encodeURIComponen
 function mpKeepLaunch() { try { history.replaceState(null, '', '#' + app.mp.launch + '&v=' + app.view); } catch (e) {} }
 function mpHeroRow() {
   const n = app.mp.ready.length, total = S().mp.managers.length;
-  const last = S().mp.lastMatch;
+  const last = S().mp.lastMatch, L = S().mp.live;
+  if (L) return `<button class="btn primary" data-act="mplive">▶ ${L.phase === 'first' ? 'Watch live' : 'Watch your match'}</button>
+    <span class="sp"></span><div><div class="label">Matchday under way · ${L.phase === 'first' ? 'second half starts at the latest in' : 'results are official in'}</div><div class="countdown" data-countdown>${fmtDur(msToMidnight())}</div></div>`;
   return `<button class="btn ${mpIsReady() ? '' : 'primary'}" data-act="mpready">${mpIsReady() ? 'Not ready yet' : '✓ Ready for the matchday'}</button>
     ${last ? '<button class="btn ghost" data-act="mplast">Last matchday</button>' : ''}
     <span class="sp"></span><div><div class="label">${n} of ${total} manager${total === 1 ? '' : 's'} ready · plays at the latest in</div><div class="countdown" data-countdown>${app.mp.nextAt ? fmtDur(msToMidnight()) : '--:--:--'}</div></div>`;
@@ -845,11 +850,85 @@ function mpRun(cmd, okMsg) {
   app.mp.room.sendGame({ k: 'cmd', id, cmd });
   return { ok: true, sent: true };
 }
-function mpShowLastResult() {
-  const lm = S()?.mp?.lastMatch; if (!lm) return;
-  const s = S(), y = S().mp.yesterday;
-  const others = lm.season === s.season ? null : [];
-  showResults(lm, { md: lm.md, objectives: y?.objectives || [], others });
+function mpShowLastResult() { const lm = S()?.mp?.lastMatch; if (lm) mpShowMatchResult(lm); }
+// Ratings & results for a league match. Before the results are official (a live matchday), there are no
+// other results or objectives to show yet.
+function mpShowMatchResult(u) {
+  const s = S(), lm = s.mp.lastMatch;
+  app.mp.seen = mpKey(u);
+  const official = lm && mpKey(lm) === mpKey(u);
+  showResults(u, { md: u.md, objectives: official ? s.mp.yesterday?.objectives || [] : [], others: official && u.season === s.season ? null : [] });
+}
+const mpKey = u => u ? u.season + ':' + u.md : null;
+
+// ---------- live matchday ----------
+// Kick-off: every manager's match starts at the same moment. Opens the match by itself unless dismissed.
+function mpLiveCheck() {
+  const mp = app.mp, L = S()?.mp?.live, lm = L?.match;
+  if (mp.liveView && !$('.match')) mp.liveView = null;
+  if (mp.liveView) { if (mp.liveView.atHalf && !mp.liveView.applied && (!L || L.phase !== 'first')) mpApplySecond(); return; }
+  if (!lm || L.phase !== 'first' || mp.koDismissed === mpKey(lm) || $('.match')) return;
+  if ($('#ko-modal')) return;
+  closeModal();
+  openModal(`<div id="ko-modal" style="display:grid;gap:14px"><div class="kicker">Matchday ${lm.md + 1} · live</div>
+    <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
+    ${lm.opponentManager ? `<div class="notice">You are up against <b>${esc(lm.opponentManager)}</b>. You can both change tactics at half time.</div>` : ''}
+    <div class="row"><div><div class="label">Kick-off in</div><div class="countdown" id="ko-cd">--</div></div><span class="sp"></span><button class="btn primary" data-act="mplive">▶ Watch now</button><button class="btn ghost" data-act="mpnolive">Not now</button></div></div>`);
+  clearInterval(mp.koTimer);
+  mp.koTimer = setInterval(() => {
+    const cd = $('#ko-cd'); if (!cd) return clearInterval(mp.koTimer);
+    const ms = L.kickoffAt - mp.room.serverNow();
+    cd.textContent = ms > 0 ? Math.ceil(ms / 1000) + 's' : 'now';
+    if (ms <= 0) { clearInterval(mp.koTimer); ACTIONS.mplive(); }
+  }, 250);
+}
+ACTIONS.mplive = () => {
+  const L = S()?.mp?.live; if (!L?.match || $('.match')) return;
+  closeModal(); clearInterval(app.mp.koTimer);
+  if (L.phase === 'first') watchMatch(L.match, true);
+  else watchMatch(L.match); // second half already decided: watch the whole match
+};
+ACTIONS.mpnolive = () => { const lm = S()?.mp?.live?.match; app.mp.koDismissed = mpKey(lm); clearInterval(app.mp.koTimer); closeModal(); };
+
+// Half time in a live match: the usual team-talk panel, but the changes go to the server, which plays the
+// second half once both managers are done (or the half-time window closes).
+function mpLiveHalftime(el, view, u, side, st) {
+  const lv = app.mp.liveView; if (!lv) return;
+  lv.atHalf = true;
+  const L = S().mp.live;
+  if (!L || L.phase !== 'first' || L.match?.htDone) return mpWaitSecond(el, 'Waiting for the second half…');
+  halftime(el, view, u, side, st, true);
+}
+function mpSendHalftime(ov, changes) {
+  app.mp.room.sendGame({ k: 'ht', changes });
+  ov.remove();
+  const opp = S().mp.live?.match?.opponentManager;
+  mpWaitSecond(app.mp.liveView.el, opp ? `Waiting for ${esc(opp)}…` : 'Waiting for the second half…');
+}
+function mpWaitSecond(el, text) {
+  const lv = app.mp.liveView; if (!lv) return;
+  if (S().mp.live?.phase !== 'first') return mpApplySecond();
+  const ov = document.createElement('div'); ov.className = 'overlay'; ov.id = 'ht-wait';
+  ov.innerHTML = `<div class="ov-card" style="width:min(460px,100%);text-align:center"><div class="kicker">Half time</div><h2>${text}</h2><div class="label">The second half starts at the latest in</div><div class="countdown" id="ht-cd">--</div></div>`;
+  $('.pitch-wrap', el).appendChild(ov);
+  clearInterval(app.mp.htTimer);
+  app.mp.htTimer = setInterval(() => { const c = $('#ht-cd'); if (!c) return clearInterval(app.mp.htTimer); c.textContent = fmtDur(Math.max(0, (S().mp.live?.htCloseAt || 0) - app.mp.room.serverNow())); }, 500);
+}
+// The server has played the second half: swap it in and kick off at the shared time.
+function mpApplySecond() {
+  const lv = app.mp.liveView; if (!lv || lv.applied) return;
+  const L = S().mp.live, lm = S().mp.lastMatch;
+  const full = L?.match && L.phase !== 'first' ? L.match : lm && lm.md === lv.u.md && lm.season === lv.u.season ? lm : null;
+  if (!full) return;
+  lv.applied = true;
+  clearInterval(app.mp.htTimer);
+  $$('.overlay', lv.el).forEach(x => x.remove());
+  const r = full.result, ch = full.changes || [null, null], view = lv.view;
+  ch.forEach((c, k) => { if (c?.subs?.length) { const dec = decoratedSheet({ ...r.sheets[k], bench: r.ht.teams[k].bench.map(b => ({ ...b })) }); view.sheets[k].bench = dec.bench.concat(view.sheets[k].bench || []); } });
+  view.replaceSecondHalf(r);
+  ch.forEach((c, k) => { if (c?.formation) view.applyFormation(k, c.formation); });
+  const wait = Math.max(0, (L?.secondAt || 0) - app.mp.room.serverNow());
+  setTimeout(() => { if (!lv.view.destroyed) lv.view.resume(); }, wait);
 }
 ACTIONS.mpready = () => { if (!app.mp) return; app.mp.room.sendGame({ k: 'ready', ready: !mpIsReady() }); };
 ACTIONS.mplast = () => { closeModal(); mpShowLastResult(); };
@@ -868,6 +947,7 @@ function mpOnGame(m) {
     if (m.nextAt !== undefined) mp.nextAt = m.nextAt;
     if (!$('.match')) render();
     if (!old) mpKeepLaunch();
+    mpLiveCheck();
   } else if (m.k === 'cmdResult') {
     const p = mp.pending[m.id]; delete mp.pending[m.id];
     const r = m.res || {};
@@ -884,11 +964,13 @@ function mpOnGame(m) {
     render();
     const lm = S().mp.lastMatch;
     if (!lm) return;
-    const sc = lm.result.score, mine = sc[lm.userSide], theirs = sc[1 - lm.userSide];
-    openModal(`<div class="row"><div><div class="kicker">Matchday ${lm.md + 1} has been played</div><h2>${mine > theirs ? 'You won!' : mine < theirs ? 'You lost' : 'A draw'}</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
-      <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs"><div class="score" style="font-size:46px">${sc[0]}–${sc[1]}</div></div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
+    if (mp.seen === mpKey(lm)) { toast('The matchday results are official.', 'ok'); return; }
+    // never show the score before the manager has had the chance to watch
+    closeModal();
+    openModal(`<div class="row"><div><div class="kicker">Matchday ${lm.md + 1} has been played</div><h2>Your match is ready</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+      <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
       ${m.digest?.newSeason ? '<div class="notice">The season is over. Your season review is in the inbox.</div>' : ''}
-      <div class="row"><button class="btn primary" data-act="mpwatch">▶ Watch the match</button><button class="btn" data-act="mplast">Ratings & results</button><button class="btn ghost" data-act="close">Later</button></div>`);
+      <div class="row"><button class="btn primary" data-act="mpwatch">▶ Watch the match</button><button class="btn" data-act="mplast">Just show me the result</button><button class="btn ghost" data-act="close">Later</button></div>`);
   } else if (m.k === 'joined' || m.k === 'left') {
     const who = app.state?.mp?.managers.find(x => x.id === m.pid)?.name;
     if (m.k === 'left' && who) toast(`${who} left the league. The computer runs their club now.`);

@@ -53,6 +53,10 @@ Opened from the game hub's lobby with `#hub=<hub>&room=<code>&token=...`, the ga
 instead of the local career. Without that fragment nothing changes: no network calls, same save.
 - `js/server/league.js` is the league server module. The hub (rocketframe/game-hub) copies `js/core` and
   `js/server` with `scripts/sync-bmp.sh` and runs every rule on the server, so browsers only send commands.
+- Matchdays are played live: when every manager is ready (or at the deadline) all matches kick off together,
+  managers make half-time changes, the server plays the second half once with both managers' changes, and the
+  results become official at full time (`startMatchday`, `halftime`, `secondHalf`, `advanceDay` in league.js).
+  Browsers never get the second half, or the seed to work it out, before half time.
 - Per-manager parts (today, objectives, inbox, history, streak, scouting) live in `state.mgrs[clubId]`.
   Single player has no `state.mgrs` and keeps them on the state itself, so old saves load unchanged.
 - The browser only accepts hubs listed in `HUB_ORIGINS` in `js/config.js` (and a localhost hub while the

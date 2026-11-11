@@ -10,6 +10,8 @@ import { createWorld, computeTable, divisionOf } from '../core/world.js';
 import { autoLineup } from '../core/players.js';
 import { makeRng, hashSeed } from '../core/rng.js';
 import * as G from '../core/game.js';
+import { resimSecondHalfBoth } from '../core/sim.js';
+import { FORMATIONS, MENTALITIES } from '../core/constants.js';
 
 export const READY = true;
 
@@ -106,6 +108,7 @@ const ALLOWED = new Set(['SET_FORMATION', 'SET_MENTALITY', 'AUTO_LINEUP', 'SWAP'
 export function apply(state, managerId, cmd) {
   const clubId = state.mp.managers[managerId];
   if (!clubId) return fail('You are not managing a club in this league.');
+  if (state.live && cmd?.type !== 'READ_MAIL') return fail('The matchday is being played. The office opens again at full time.');
   if (!cmd || typeof cmd !== 'object' || !ALLOWED.has(cmd.type)) return fail('That action is not available in a shared league.');
   let c;
   try { c = JSON.parse(JSON.stringify(cmd)); } catch (e) { return fail('Bad command'); }
@@ -159,7 +162,7 @@ export function viewFor(state, managerId) {
     const known = p.clubId === clubId || p.youthOf === clubId || !!m.scouted?.[id];
     players[id] = known ? { ...p, scouted: true } : { ...p, scouted: false, potential: null };
   }
-  const { seed, rngState, mgrs, mp, pending, mailSeq, ...world } = state;
+  const { seed, rngState, mgrs, mp, pending, mailSeq, live, ...world } = state;
   return {
     ...world,
     players,
@@ -177,13 +180,127 @@ export function viewFor(state, managerId) {
       managers: Object.values(state.mgrs).map(x => ({ id: x.managerId, name: x.managerName, clubId: state.mp.managers[x.managerId] })),
       yesterday: m.yesterday,
       lastMatch: state.mp.lastMatches?.[clubId] || null,
+      live: liveFor(state, managerId),
       seasonsPlayed: seasonsPlayed(state),
       points: m.points || 0,
     },
   };
 }
 
+// ---------- the live matchday ----------
+// A matchday is played live: every match with a manager kicks off at the same moment, the managers watch
+// it, and at half time each of them can change tactics and make substitutions. The second half is then
+// simulated once with both managers' changes, and everyone watches it from the same moment. The hub
+// adapter drives it with three timers:
+//   startMatchday(state, now)      when everyone is ready, or at the deadline     -> { kickoffAt, htCloseAt }
+//   halftime(state, id, changes)   each manager's half-time changes               -> { ok, allIn }
+//   secondHalf(state, now)         when allIn, or at htCloseAt                    -> { secondAt, ftAt }
+//   advanceDay(state)              at ftAt: results become official, the night runs
+// Timings (ms). The first half of a match at normal speed takes about two and a half minutes.
+export const LIVE = { kickoffDelay: 10e3, firstHalfMax: 4 * 60e3, halftimeMax: 90e3, secondDelay: 4e3, secondHalfMax: 4 * 60e3 };
+
+export function startMatchday(state, now) {
+  if (state.live) return { kickoffAt: state.live.kickoffAt, htCloseAt: state.live.htCloseAt };
+  const p = G.prepareMatchday(state);
+  const kickoffAt = now + LIVE.kickoffDelay;
+  const live = state.live = { phase: 'first', kickoffAt, htCloseAt: kickoffAt + LIVE.firstHalfMax + LIVE.halftimeMax, secondAt: null, ftAt: null, matches: {} };
+  for (const id of state.humans) {
+    const u = p.byClub[id]; if (!u) continue;
+    const key = u.div + ':' + u.idx;
+    const m = live.matches[key] ||= { key, div: u.div, idx: u.idx, home: u.home, away: u.away, managers: [null, null], changes: [null, null], done: [false, false] };
+    m.managers[u.userSide] = state.mgrs[id].managerId;
+  }
+  return { kickoffAt, htCloseAt: live.htCloseAt };
+}
+
+function liveMatchOf(state, managerId) {
+  const clubId = state.mp.managers[managerId];
+  if (!state.live || !clubId) return null;
+  for (const m of Object.values(state.live.matches)) { const side = m.managers.indexOf(managerId); if (side >= 0) return { m, side, clubId }; }
+  return null;
+}
+function pendingEntry(state, m) { return state.pending.fixtures.find(f => f.div === m.div && f.idx === m.idx); }
+
+// The live match this manager is in (null outside a live matchday). In the first half the result only
+// holds the first half: the second half is decided at half time, so a browser can't peek at it.
+export function liveFor(state, managerId) {
+  const x = liveMatchOf(state, managerId);
+  if (!x) return state.live ? { phase: state.live.phase, kickoffAt: state.live.kickoffAt, htCloseAt: state.live.htCloseAt, secondAt: state.live.secondAt, ftAt: state.live.ftAt, match: null } : null;
+  const { m, side } = x, L = state.live;
+  const e = pendingEntry(state, m);
+  const result = L.phase === 'first' ? firstHalfOnly(e.result) : e.result;
+  const other = m.managers[1 - side];
+  return {
+    phase: L.phase, kickoffAt: L.kickoffAt, htCloseAt: L.htCloseAt, secondAt: L.secondAt, ftAt: L.ftAt,
+    match: { key: m.key, md: state.md, season: state.season, div: m.div, idx: m.idx, home: m.home, away: m.away, userSide: side, result,
+      changes: L.phase === 'first' ? null : m.changes,
+      htDone: m.done[side], opponentManager: other ? state.mgrs[state.mp.managers[other]]?.managerName ?? null : null, opponentDone: other ? m.done[1 - side] : true },
+  };
+}
+function firstHalfOnly(r) {
+  const first = r.events.filter(e => e.half === 1);
+  const htScore = [0, 1].map(k => first.filter(e => e.kind === 'goal' && e.team === k).length);
+  // ratings, stats and the full-time score are not known yet; the viewer only needs the first half and the half-time state
+  const ht = r.ht ? { ...r.ht, rngState: undefined } : r.ht;
+  return { ...r, ht, events: first, score: htScore, ratings: {}, ps: {}, motm: null, stats: r.ht?.stats ?? r.stats, finalOn: r.ht?.teams?.map(t => t.on) ?? r.finalOn, firstHalfOnly: true };
+}
+
+export function halftime(state, managerId, changes) {
+  const L = state.live;
+  if (!L || L.phase !== 'first') return fail('Half time is over.');
+  const x = liveMatchOf(state, managerId);
+  if (!x) return fail('You have no match today.');
+  const { m, side } = x;
+  if (m.done[side]) return fail('Your half-time changes are already in.');
+  const e = pendingEntry(state, m);
+  const T = e.result.ht.teams[side];
+  const ch = {};
+  if (changes && typeof changes === 'object') {
+    if (MENTALITIES[changes.mentality] && changes.mentality !== T.mentality) ch.mentality = changes.mentality;
+    if (FORMATIONS[changes.formation] && changes.formation !== T.formation) ch.formation = changes.formation;
+    const subs = [], usedIn = new Set(), usedOut = new Set();
+    for (const s of Array.isArray(changes.subs) ? changes.subs.slice(0, T.subsLeft) : []) {
+      if (!s || usedIn.has(s.inId) || usedOut.has(s.outId)) continue;
+      if (!T.on.some(p => p.id === s.outId) || !T.bench.some(p => p.id === s.inId)) continue;
+      subs.push({ outId: String(s.outId), inId: String(s.inId) }); usedIn.add(s.inId); usedOut.add(s.outId);
+    }
+    if (subs.length) ch.subs = subs;
+  }
+  m.changes[side] = Object.keys(ch).length ? ch : null;
+  m.done[side] = true;
+  return { ok: true, allIn: allIn(state) };
+}
+// True when the half-time break is only waiting for nobody (for example after a manager left).
+export function halftimeComplete(state) { return state.live?.phase === 'first' && allIn(state); }
+function allIn(state) {
+  return Object.values(state.live.matches).every(m => m.managers.every((id, k) => !id || m.done[k] || !state.mp.managers[id]));
+}
+
+export function secondHalf(state, now) {
+  const L = state.live;
+  if (!L || L.phase !== 'first') return { secondAt: L?.secondAt ?? null, ftAt: L?.ftAt ?? null };
+  const p = state.pending;
+  for (const m of Object.values(L.matches)) {
+    // Always re-play the second half with a seed browsers never see, so nobody can work out in advance
+    // what their changes (or no changes) would lead to.
+    const e = pendingEntry(state, m);
+    const r = resimSecondHalfBoth(e.result, m.changes, hashSeed(e.result.seed, state.seed, 'ht', JSON.stringify(m.changes)));
+    e.result = r;
+    for (const k of [0, 1]) {
+      const cid = k === 0 ? m.home : m.away;
+      if (p.byClub[cid]) p.byClub[cid].result = r;
+      if (m.changes[k]?.mentality) state.clubs[cid].mentality = m.changes[k].mentality;
+    }
+  }
+  L.phase = 'second';
+  L.secondAt = now + LIVE.secondDelay;
+  L.ftAt = L.secondAt + LIVE.secondHalfMax;
+  return { secondAt: L.secondAt, ftAt: L.ftAt };
+}
+
 // ---------- the matchday ----------
+// Makes the matchday's results official and runs the night. Called at full time of a live matchday
+// (or directly, which plays the matchday without the live part).
 export function advanceDay(state) {
   for (const m of Object.values(state.mgrs)) {
     // the streak counts matchdays in a row on which the manager did something
@@ -191,11 +308,14 @@ export function advanceDay(state) {
     m.calendar.bestStreak = Math.max(m.calendar.bestStreak, m.calendar.streak);
     m.active = false;
   }
+  const live = state.live;
   const r = G.playDayAll(state);
+  state.live = null;
   state.mp.lastMatches = {};
   const results = [];
   for (const [cid, u] of Object.entries(r.matches)) {
-    state.mp.lastMatches[cid] = { md: r.md, season: r.season, div: u.div, idx: u.idx, home: u.home, away: u.away, userSide: u.userSide, result: u.result };
+    const lm = live?.matches[u.div + ':' + u.idx];
+    state.mp.lastMatches[cid] = { md: r.md, season: r.season, div: u.div, idx: u.idx, home: u.home, away: u.away, userSide: u.userSide, result: u.result, changes: lm ? lm.changes : null };
     if (!results.some(x => x.h === u.home && x.a === u.away)) results.push({ h: u.home, a: u.away, s: u.result.score.slice() });
   }
   return { day: state.calendar.day, md: r.md, season: r.season, results, newSeason: state.season !== r.season };

@@ -107,3 +107,62 @@ test('a manager who leaves and comes back gets their club and inbox back', () =>
   assert.equal(s.mgrs[c2].today.trained, true, 'leaving and rejoining does not reset the day');
   assert.equal(L.joinClub(s, 'u2', 'Ben').clubId, c2, 'joining twice is harmless');
 });
+
+test('live matchday: kick-off, half-time changes from both managers, then full time', () => {
+  let s = L.createLeague(77, M);
+  let met = false;
+  for (let d = 0; d < 12; d++) {
+    const t0 = 1e12 + d * 1e7;
+    const ko = L.startMatchday(s, t0);
+    assert.equal(ko.kickoffAt, t0 + L.LIVE.kickoffDelay);
+    assert.equal(L.apply(s, 'u1', { type: 'AUTO_LINEUP' }).ok, false, 'the office is closed during the match');
+    s = roundtrip(s);
+    const lives = M.map(m => L.liveFor(s, m.id));
+    for (const lv of lives) {
+      assert.equal(lv.phase, 'first');
+      assert.ok(lv.match.result.events.every(e => e.half === 1), 'no second half before half time');
+      assert.equal(lv.match.result.ht.rngState, undefined);
+      assert.equal(L.viewFor(s, 'u1').mp.live.phase, 'first');
+    }
+    const h2h = lives.find(lv => lv.match.opponentManager);
+    // every manager sends changes; the last one completes half time
+    const ids = M.map(m => m.id);
+    ids.forEach((id, i) => {
+      const lv = lives[i], T = lv.match.result.ht.teams[lv.match.userSide];
+      const sub = { outId: T.on[5].id, inId: T.bench[0]?.id };
+      const r = L.halftime(s, id, { mentality: 'attacking', formation: '4-3-3', subs: [sub, { outId: 'nope', inId: 'x' }] });
+      assert.equal(r.ok, true);
+      assert.equal(r.allIn, i === ids.length - 1);
+    });
+    assert.equal(L.halftime(s, 'u1', {}).ok, false, 'only once');
+    const sh = L.secondHalf(s, t0 + 60e3);
+    assert.equal(sh.secondAt, t0 + 60e3 + L.LIVE.secondDelay);
+    const after = L.liveFor(s, 'u1');
+    assert.equal(after.phase, 'second');
+    assert.ok(after.match.result.events.some(e => e.half === 2));
+    assert.ok(after.match.changes[after.match.userSide].subs.length === 1, 'bad subs are dropped');
+    if (h2h) {
+      met = true;
+      const a = L.liveFor(s, h2h.match.opponentManager === 'Ana' ? 'u1' : h2h.match.opponentManager === 'Ben' ? 'u2' : 'u3');
+      assert.ok(a.match.changes[0] && a.match.changes[1], 'both managers\' changes are in the same match');
+    }
+    const dig = L.advanceDay(s);
+    assert.equal(s.live, null);
+    const v = L.viewFor(s, 'u1');
+    assert.equal(v.mp.live, null);
+    assert.deepEqual(v.mp.lastMatch.result.score, dig.results.find(x => x.h === v.mp.lastMatch.home && x.a === v.mp.lastMatch.away).s);
+    assert.ok(v.mp.lastMatch.changes);
+    s = roundtrip(s);
+  }
+  assert.ok(met, 'two managers met at least once');
+});
+
+test('half time closes for managers who are away', () => {
+  const s = L.createLeague(3, M);
+  L.startMatchday(s, 0);
+  assert.equal(L.halftime(s, 'u1', null).allIn, false);
+  L.secondHalf(s, 5e5);
+  assert.equal(L.halftime(s, 'u2', { mentality: 'attacking' }).ok, false, 'too late');
+  L.advanceDay(s);
+  assert.equal(s.md, 1);
+});
