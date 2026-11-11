@@ -56,7 +56,7 @@ instead of the local career. Without that fragment nothing changes: no network c
 - Per-manager parts (today, objectives, inbox, history, streak, scouting) live in `state.mgrs[clubId]`.
   Single player has no `state.mgrs` and keeps them on the state itself, so old saves load unchanged.
 - The browser only accepts hubs listed in `HUB_ORIGINS` in `js/config.js` (and a localhost hub while the
-  game is served from localhost). Add the hub's production and staging origins there once they are deployed.
+  game is served from localhost). It lists the production and staging hubs.
 - Tests: `node --test test/*.test.mjs`.
 
 ## Before a public launch
