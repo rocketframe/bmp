@@ -1,7 +1,12 @@
-# Matchday Legends
+# Bolzplatz Manager Pro
 
 An original browser football-manager game built around a **daily session**: one matchday per real day,
 10 to 30 minutes of play, and fully animated matches.
+
+The name is a nod to the 1991 classic Bundesliga Manager Professional: the initials spell BMP, and a
+Bolzplatz is the neighbourhood kickabout pitch. Don't use "Bundesliga" (a DFL trademark) or the original's
+name, art or text anywhere in the game. Before launch, search the name in EUIPO TMview, the app stores and
+domain registrars.
 
 ## Run it
 No build step is needed for development. Serve the folder with any static server and open `index.html`:

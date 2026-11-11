@@ -62,4 +62,4 @@ export const KIT_COLORS = [
 export const PATTERNS = ['plain', 'stripes', 'hoops', 'halves', 'sash', 'sleeves', 'pinstripe'];
 export const CREST_SHAPES = ['shield', 'round', 'diamond', 'pointed', 'square'];
 
-export const AD_BOARD_BRANDS = ['YOUR AD HERE', 'KESSEL COLA', 'NORDWIND ENERGY', 'PIXELBANK', 'MATCHDAY LEGENDS', 'GRÜNFELD BREWERY', 'VOLTA MOBILE', 'ORBIT TYRES', 'BLUEHARBOR INSURANCE'];
+export const AD_BOARD_BRANDS = ['YOUR AD HERE', 'KESSEL COLA', 'NORDWIND ENERGY', 'PIXELBANK', 'BOLZPLATZ MANAGER PRO', 'GRÜNFELD BREWERY', 'VOLTA MOBILE', 'ORBIT TYRES', 'BLUEHARBOR INSURANCE'];

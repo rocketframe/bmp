@@ -77,7 +77,7 @@ function render() {
   root.innerHTML = `
   <div class="app">
     <header class="top"><div class="top-in">
-      <a class="logo" href="#today"><span class="logo-mark"></span><span>Matchday <b>Legends</b></span></a>
+      <a class="logo" href="#today"><span class="logo-mark"></span><span>Bolzplatz <b>Manager Pro</b></span></a>
       <div class="top-club">${crest(cv(c), 34)}<div><div class="nm">${cn(c)}</div><div class="label">${esc(Pk.dname(G.divisionOf(s, c.id)))} · ${seasonLabel()}</div></div></div>
       <div class="top-stats">
         <div class="stat hide-m"><span class="label">Day</span><span class="v">${s.calendar.day} · MD ${Math.min(s.md + 1, G.seasonLength(s))}/${G.seasonLength(s)}</span></div>
@@ -89,7 +89,7 @@ function render() {
     <div class="shell">
       <nav class="nav" aria-label="Sections">${NAV.map(([k, l]) => `<a href="#${k}" class="${view === k ? 'on' : ''}">${icon(k)}<span>${l}</span>${k === 'inbox' && unread ? `<span class="badge">${unread}</span>` : ''}</a>`).join('')}</nav>
       <main id="main">${VIEWS[view]()}</main>
-      <aside class="rail">${adSlot('rail')}<p class="legal">Matchday Legends is a work of fiction. Clubs, leagues and players are invented. <a href="#legal">Terms & disclaimer</a></p></aside>
+      <aside class="rail">${adSlot('rail')}<p class="legal">${esc(GAME_TITLE)} is a work of fiction. Clubs, leagues and players are invented. <a href="#legal">Terms & disclaimer</a></p></aside>
     </div>
   </div>`;
   mountAds(root);
@@ -365,7 +365,7 @@ const VIEWS = {
         </div>
         <div style="display:grid;gap:10px;align-content:start"><h3>Import a pack</h3>
           <p class="muted" style="margin:0;font-size:14px">Paste a pack, or choose a .json file. Importing replaces your current pack in this browser only.</p>
-          <textarea id="pk-in" placeholder='{"format":"matchday-legends-namepack", ...}'></textarea>
+          <textarea id="pk-in" placeholder='{"format":"bolzplatz-manager-pro-namepack", ...}'></textarea>
           <input type="file" id="pk-file" accept=".json,application/json" data-chg="pkfile">
           <label class="row" style="align-items:flex-start;gap:8px;font-size:14px"><input type="checkbox" id="pk-ok"> <span>I confirm this pack contains no trademarks, real people's names or likenesses I have no right to use, and nothing harmful, hateful or illegal. I use it at my own responsibility.</span></label>
           <button class="btn primary" data-act="pkimport">Import pack</button>
@@ -505,7 +505,7 @@ const ACTIONS = {
   readall() { S().inbox.forEach(m => m.read = true); save(); render(); },
   pref(d) { let v = d.v; if (v === 'true') v = true; else if (v === 'false') v = false; else if (/^\d+$/.test(v)) v = +v; app.prefs[d.k] = v; savePrefs(); render(); },
   pkcopy() { copyText($('#pk-out').value); },
-  pkdownload() { download('matchday-legends-namepack.json', Pk.exportPack()); },
+  pkdownload() { download('bolzplatz-manager-pro-namepack.json', Pk.exportPack()); },
   pkreset() { if (app.ui.confirmReset) { Pk.resetPack(); app.ui.confirmReset = false; toast('Name pack reset to the default names.', 'ok'); render(); } else { app.ui.confirmReset = true; toast('Press "Reset to defaults" again to confirm.', 'bad'); } },
   pkimport() {
     if (!$('#pk-ok').checked) return toast('Please confirm the pack follows the rules before importing.', 'bad');
@@ -513,7 +513,7 @@ const ACTIONS = {
     catch (e) { toast(e instanceof SyntaxError ? 'That text is not valid JSON. Check you copied the whole pack.' : e.message, 'bad'); }
   },
   saveexport() { copyText(JSON.stringify(S())); },
-  savedownload() { download(`matchday-legends-save-day${S().calendar.day}.json`, JSON.stringify(S())); },
+  savedownload() { download(`bolzplatz-manager-pro-save-day${S().calendar.day}.json`, JSON.stringify(S())); },
   saveimport() {
     try { const s = JSON.parse($('#save-in').value); if (s.version !== SAVE_VERSION || !s.humans) throw new Error(); app.state = s; sync(); save(); toast('Save loaded.', 'ok'); go('today'); }
     catch (e) { toast('That is not a valid save.', 'bad'); }
@@ -673,7 +673,7 @@ function watchMatch() {
   let watchedHalf = false, skipped = false;
   const view = new MatchView($('canvas', el), {
     home, away, result: u.result, speed: app.prefs.speed === 2 ? 2 : 1, camera: app.prefs.camera, audio: app.audio, stadium: Pk.cstadium(H),
-    boards: ['MATCHDAY LEGENDS', 'YOUR AD HERE', Pk.cname(H).toUpperCase(), 'KESSEL COLA', 'NORDWIND ENERGY', 'PIXELBANK'],
+    boards: ['BOLZPLATZ MANAGER PRO', 'YOUR AD HERE', Pk.cname(H).toUpperCase(), 'KESSEL COLA', 'NORDWIND ENERGY', 'PIXELBANK'],
     hooks: {
       onClock: l => { $('#m-clk', el).textContent = l; },
       onScore: sc => { $('#m-sc', el).textContent = `${sc[0]}–${sc[1]}`; },
@@ -765,7 +765,7 @@ function renderTitle(root) {
   const sel = app.ui.pickClub;
   root.innerHTML = `<div class="title"><canvas id="demo"></canvas><div class="title-in">
     <div class="kicker">One matchday a day · build a dynasty</div>
-    <h1>Matchday <b>Legends</b></h1>
+    <h1>Bolzplatz <b>Manager Pro</b></h1>
     <p class="tag">Run a football club in 15 minutes a day. Train the squad, trade players overnight, and watch every match come alive.</p>
     <div class="card" style="display:grid;gap:14px;background:rgba(18,26,35,.92)">
       <div class="row"><label class="label" for="mgr">Your name</label><input id="mgr" type="text" maxlength="24" value="${esc(app.ui.mgr || '')}" placeholder="Manager"><span class="sp"></span><span class="label">Pick your club. Fewer stars means a harder job.</span></div>
