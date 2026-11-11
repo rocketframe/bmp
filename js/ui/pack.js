@@ -2,10 +2,13 @@
 // Packs live in this browser only. They never change the shared game data, so in a future
 // multiplayer mode other managers always see the default fictional names.
 const KEY = 'ml.namepack.v1';
-export const PACK_FORMAT = 'matchday-legends-namepack';
+export const PACK_FORMAT = 'bolzplatz-manager-pro-namepack';
+// Packs exported before the rename still import.
+const LEGACY_FORMATS = ['matchday-legends-namepack'];
+const isPack = (p) => p && (p.format === PACK_FORMAT || LEGACY_FORMATS.includes(p.format));
 let pack = load();
 function load() {
-  try { const p = JSON.parse(localStorage.getItem(KEY) || 'null'); if (p && p.format === PACK_FORMAT) return p; } catch (e) {}
+  try { const p = JSON.parse(localStorage.getItem(KEY) || 'null'); if (isPack(p)) return { ...p, format: PACK_FORMAT }; } catch (e) {}
   return blank();
 }
 export function blank() { return { format: PACK_FORMAT, version: 1, title: 'My name pack', author: '', clubs: {}, players: {}, divisions: {} }; }
@@ -41,7 +44,7 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 const str = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n) : undefined);
 // Validate an imported pack: only known fields, plain strings, sane lengths. Nothing executable.
 export function sanitizePack(raw) {
-  if (!raw || raw.format !== PACK_FORMAT) throw new Error('This file is not a Matchday Legends name pack.');
+  if (!isPack(raw)) throw new Error('This file is not a Bolzplatz Manager Pro name pack.');
   const out = blank();
   out.title = str(raw.title, 60) || 'Imported pack'; out.author = str(raw.author, 40) || '';
   let n = 0;

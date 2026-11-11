@@ -25,7 +25,7 @@ export class MatchView {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
     this.home = home; this.away = away; this.result = result; this.hooks = hooks;
     this.camMode = camera; this.speed = speed; this.audio = audio; this.stadium = stadium; this.demo = demo;
-    this.boards = boards || ['MATCHDAY LEGENDS', 'YOUR AD HERE', 'KESSEL COLA', 'NORDWIND ENERGY', 'PIXELBANK', 'ORBIT TYRES'];
+    this.boards = boards || ['BOLZPLATZ MANAGER PRO', 'YOUR AD HERE', 'KESSEL COLA', 'NORDWIND ENERGY', 'PIXELBANK', 'ORBIT TYRES'];
     const seed = result.seed || 1;
     this.weather = weather || (seed % 7 === 0 ? 'rain' : seed % 23 === 0 ? 'snow' : 'clear');
     this.night = night ?? (seed % 3 !== 0);
