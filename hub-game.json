@@ -1,0 +1,75 @@
+{
+  "hubApi": 1,
+  "id": "bmp",
+  "name": "Bolzplatz Manager Pro",
+  "url": "./",
+  "pitch": "Run a football club in a shared league that plays out over days.",
+  "icon": "hub-icon.svg",
+  "players": {
+    "min": 1,
+    "max": 12
+  },
+  "rankedMin": 2,
+  "engine": "server",
+  "engineConfig": {
+    "serverUrl": "https://bmp-rules.rocketframe.workers.dev/",
+    "stateful": true,
+    "timeoutMs": 20000
+  },
+  "joinMidGame": true,
+  "persistent": true,
+  "reconnectGraceMs": null,
+  "options": [
+    {
+      "key": "pace",
+      "label": "Matchdays",
+      "type": "choice",
+      "choices": [
+        "ready",
+        "daily"
+      ],
+      "names": {
+        "ready": "When everyone is ready",
+        "daily": "Once a day"
+      }
+    },
+    {
+      "key": "deadlineHours",
+      "label": "Deadline (hours)",
+      "type": "choice",
+      "choices": [
+        6,
+        12,
+        24,
+        48
+      ],
+      "default": 24
+    },
+    {
+      "key": "seasons",
+      "label": "Seasons",
+      "type": "choice",
+      "choices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "key": "hourUtc",
+      "label": "Hour (UTC)",
+      "type": "int",
+      "min": 0,
+      "max": 23,
+      "default": 0,
+      "hidden": true
+    }
+  ],
+  "score": {
+    "label": "League points",
+    "order": "desc",
+    "format": "points"
+  }
+}
