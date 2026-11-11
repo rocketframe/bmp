@@ -1,4 +1,4 @@
-import { GAME_TITLE, DEV_TOOLS, SAVE_KEY, PREFS_KEY } from './config.js';
+import { GAME_TITLE, DEV_TOOLS, SAVE_KEY, PREFS_KEY, HUB_ORIGINS } from './config.js';
 import { createWorld, SAVE_VERSION } from './core/world.js';
 import * as G from './core/game.js';
 import { FORMATIONS, FORMATION_KEYS, MENTALITIES, TRAINING_FOCUS, LEAGUE, POS_LABEL } from './core/constants.js';
@@ -11,7 +11,7 @@ import { crest } from './ui/crest.js';
 import * as Pk from './ui/pack.js';
 import { adSlot, mountAds } from './ads.js';
 
-const app = { state: null, view: 'today', ui: { tab: {}, sel: null, filter: { pos: 'ALL', max: 0, sort: 'skill', q: '' }, indiv: [], focus: 'balanced', mdView: null, divView: null, edClub: null, mailOpen: null }, prefs: loadPrefs(), audio: new StadiumAudio(), voice: new Commentator() };
+const app = { state: null, mp: null, view: 'today', ui: { tab: {}, sel: null, filter: { pos: 'ALL', max: 0, sort: 'skill', q: '' }, indiv: [], focus: 'balanced', mdView: null, divView: null, edClub: null, mailOpen: null }, prefs: loadPrefs(), audio: new StadiumAudio(), voice: new Commentator() };
 app.voice.preferred = app.prefs.voiceName; app.voice.pickVoice(app.prefs.voiceName);
 const S = () => app.state;
 const me = () => G.human(app.state);
@@ -22,7 +22,7 @@ const CL = id => app.state.clubs[id];
 function loadPrefs() { try { return { speed: 1, camera: 'broadcast', sound: false, voice: true, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }; } catch (e) { return { speed: 1, camera: 'broadcast', sound: false }; } }
 function savePrefs() { try { localStorage.setItem(PREFS_KEY, JSON.stringify(app.prefs)); } catch (e) {} }
 function save() {
-  if (!app.state) return;
+  if (!app.state || app.mp) return; // a shared league lives on the server, never in the single-player save
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(app.state)); } catch (e) { toast('Could not save in this browser. Export your save from Options to keep it.', 'bad'); }
 }
 function loadSave() {
@@ -39,7 +39,7 @@ const ps = p => esc(Pk.pshort(p));
 const posTag = p => `<span class="pos pos-${p}">${p}</span>`;
 const stars = r => { const n = Math.max(1, Math.min(5, Math.round((r - 45) / 8))); return '★'.repeat(n) + '<span style="opacity:.25">' + '★'.repeat(5 - n) + '</span>'; };
 const seasonLabel = () => `${S().year}/${String(S().year + 1).slice(2)}`;
-const potLabel = p => (p.clubId && CL(p.clubId)?.human) || p.scouted ? `<span class="skill ${skillClass(p.potential)}">${p.potential}</span>` : '<span class="muted" title="Send a scout to find out">?</span>';
+const potLabel = p => (p.clubId && p.clubId === me().id) || p.scouted ? `<span class="skill ${skillClass(p.potential)}">${p.potential}</span>` : '<span class="muted" title="Send a scout to find out">?</span>';
 const statusChips = (p, club) => {
   const out = [];
   if (p.injury > 0) out.push(`<span class="chip bad">Injured ${p.injury}d</span>`);
@@ -50,7 +50,7 @@ const statusChips = (p, club) => {
   if (p.contract <= 1 && club) out.push(`<span class="chip warn">${p.contract ? '1 yr left' : 'Expiring'}</span>`);
   return out.join(' ');
 };
-function msToMidnight() { const n = new Date(Date.now() + (S()?.calendar.devOffset || 0) * 864e5); const m = new Date(n); m.setHours(24, 0, 0, 0); return m - n; }
+function msToMidnight() { if (app.mp) { const L = S()?.mp?.live; return Math.max(0, (L ? (L.phase === 'first' ? L.htCloseAt : L.ftAt) : app.mp.nextAt || 0) - app.mp.room.serverNow()); } const n = new Date(Date.now() + (S()?.calendar.devOffset || 0) * 864e5); const m = new Date(n); m.setHours(24, 0, 0, 0); return m - n; }
 function fmtDur(ms) { const s = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; }
 
 const ICONS = {
@@ -100,11 +100,11 @@ function afterRender() {
   clearInterval(app.cdTimer);
   if (cd) app.cdTimer = setInterval(() => {
     const ms = msToMidnight(); cd.textContent = fmtDur(ms);
-    if (ms < 1000) { clearInterval(app.cdTimer); setTimeout(() => { sync(); render(); }, 1500); }
+    if (ms < 1000) { clearInterval(app.cdTimer); if (!app.mp) setTimeout(() => { sync(); render(); }, 1500); }
   }, 1000);
 }
 function go(v) { if (location.hash !== '#' + v) location.hash = v; else { app.view = v; render(); } }
-window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS[v] && app.state) { closeModal(); app.view = v; app.ui.sel = null; render(); window.scrollTo(0, 0); } });
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (VIEWS[v] && app.state) { closeModal(); app.view = v; app.ui.sel = null; if (app.mp) mpKeepLaunch(); render(); window.scrollTo(0, 0); } });
 
 // ---------- views ----------
 const VIEWS = {
@@ -118,7 +118,7 @@ const VIEWS = {
     const steps = [
       ['training', 'Train', t.trained ? 'Session done' : 'Pick today’s focus', t.trained],
       ['squad', 'Set your team', visitedSquad ? 'Team checked' : `${c.formation} · ${MENTALITIES[c.mentality].label}`, visitedSquad || t.played],
-      ['play', 'Play matchday', t.played ? 'Full time' : 'Kick off when ready', t.played],
+      app.mp ? ['play', 'Ready up', mpIsReady() ? 'You are ready' : 'Press Ready when you are done', mpIsReady()] : ['play', 'Play matchday', t.played ? 'Full time' : 'Kick off when ready', t.played],
       ['transfers', 'Market', s.bids.length ? `${s.bids.length} bid${s.bids.length > 1 ? 's' : ''} pending` : 'Bids resolve overnight', visitedMarket],
     ];
     const nextI = steps.findIndex(x => !x[3]);
@@ -136,19 +136,19 @@ const VIEWS = {
         <div class="vs">${rep ? `<div class="score">${rep.score[0]}–${rep.score[1]}</div>` : 'VS'}</div>
         <div class="side r">${crest(cv(away), 64)}<div><div class="nm">${cn(away)}</div><div class="sub">${formChips(tbl, away.id)}</div></div></div>
       </div>
-      <div class="steps">${steps.map(([k, l, sub, done], i) => `<a class="step ${done ? 'done' : ''} ${i === nextI ? 'next' : ''}" href="${k === 'play' ? '#today' : '#' + k}" ${k === 'play' && !t.played ? 'data-act="preview"' : ''}><span class="label">${done ? '✓' : i + 1}. ${l}</span><b>${esc(sub)}</b></a>`).join('')}</div>
-      <div class="row">${t.played
+      <div class="steps">${steps.map(([k, l, sub, done], i) => `<a class="step ${done ? 'done' : ''} ${i === nextI ? 'next' : ''}" href="${k === 'play' ? '#today' : '#' + k}" ${k === 'play' && !t.played ? `data-act="${app.mp ? 'mpready' : 'preview'}"` : ''}><span class="label">${done ? '✓' : i + 1}. ${l}</span><b>${esc(sub)}</b></a>`).join('')}</div>
+      <div class="row">${app.mp ? mpHeroRow() : t.played
         ? `<div><div class="label">Next matchday unlocks in</div><div class="countdown" data-countdown>${fmtDur(msToMidnight())}</div></div><span class="sp"></span><a class="btn" href="#league">See all results</a>`
         : `<button class="btn primary" data-act="preview">▶ Play matchday</button><button class="btn ghost" data-act="quick">Quick result</button><span class="sp"></span><span class="muted" style="font-size:13px">Miss today and your assistant plays it. Training is lost.</span>`}</div>
     </div></section>
     <div class="grid2">
-      <section class="card"><div class="card-h"><h3>Daily objectives</h3><span class="label">Reset at midnight</span></div>
+      <section class="card"><div class="card-h"><h3>Daily objectives</h3><span class="label">${app.mp ? 'New ones every matchday' : 'Reset at midnight'}</span></div>
         ${t.objectives.map(o => `<div class="obj ${o.done ? 'done' : ''}"><span class="tick"></span><span class="t">${esc(o.label)}</span><span class="reward">+${money(o.reward)}</span></div>`).join('')}
       </section>
-      <section class="card"><div class="card-h"><h3>Login streak</h3><span class="label">Best: ${s.calendar.bestStreak} days</span></div>
+      ${app.mp ? mpManagersCard() : `<section class="card"><div class="card-h"><h3>Login streak</h3><span class="label">Best: ${s.calendar.bestStreak} days</span></div>
         <div class="row" style="justify-content:space-between"><div class="flame">${flames}</div><div class="big-money">${s.calendar.streak}<span class="label"> days</span></div></div>
         <p class="muted" style="margin:10px 0 0;font-size:14px">Your sponsor pays a loyalty bonus every day you show up, growing for 7 days in a row. Every 7th day the fans get a hype boost.</p>
-      </section>
+      </section>`}
     </div>
     <div class="grid2">
       <section class="card"><div class="card-h"><h3>Inbox</h3><a href="#inbox" class="label">All messages</a></div>
@@ -386,15 +386,18 @@ const VIEWS = {
         <div><div class="label">Commentary voice</div><div class="seg">${[[true, 'On'], [false, 'Off']].map(([v, l]) => `<button class="${app.prefs.voice !== false === v ? 'on' : ''}" data-act="pref" data-k="voice" data-v="${v}">${l}</button>`).join('')}</div>${app.voice.ok && app.voice.voices().length ? `<select data-chg="voicepick" style="margin-top:6px;max-width:260px">${app.voice.voices().map(v => `<option ${app.voice.voice === v ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>` : '<div class="muted" style="font-size:13px">This browser has no speech voices.</div>'}</div>
         <div><div class="label">Stadium sound</div><div class="seg">${[[true, 'On'], [false, 'Off']].map(([v, l]) => `<button class="${app.prefs.sound === v ? 'on' : ''}" data-act="pref" data-k="sound" data-v="${v}">${l}</button>`).join('')}</div></div>
       </section>
-      <section class="card" style="display:grid;gap:12px;align-content:start"><h3>Your save</h3>
+      ${app.mp ? `<section class="card" style="display:grid;gap:12px;align-content:start"><h3>Shared league</h3>
+        <p class="muted" style="margin:0;font-size:14px">This league is run by the game server, room ${esc(app.mp.room.code)}. Your single-player career in this browser is not touched.</p>
+        <div class="row"><a class="btn" href="${esc(mpLobbyUrl())}">Back to the lobby</a></div>
+      </section>` : `<section class="card" style="display:grid;gap:12px;align-content:start"><h3>Your save</h3>
         <p class="muted" style="margin:0;font-size:14px">Your career is saved in this browser automatically. Export it to move it to another device or keep a backup.</p>
         <div class="row"><button class="btn" data-act="saveexport">Copy save to clipboard</button><button class="btn" data-act="savedownload">Download save</button></div>
         <textarea id="save-in" placeholder="Paste a save here to load it"></textarea>
         <div class="row"><button class="btn" data-act="saveimport">Load pasted save</button></div>
         <div class="row" style="margin-top:8px">${app.ui.confirmNew ? `<span>Start over? Your current career will be deleted.</span><button class="btn danger" data-act="newgame">Yes, start a new career</button><button class="btn" data-act="cancelnew">Keep playing</button>` : `<button class="btn danger" data-act="asknew">Start a new career</button>`}</div>
-      </section>
+      </section>`}
     </div>
-    ${DEV_TOOLS ? `<section class="card"><div class="card-h"><h3>Testing tools</h3><span class="chip warn">Turn off before launch</span></div><p class="muted" style="font-size:14px;margin-top:0">Moves the game clock forward one day so you can try the daily loop without waiting. Clock offset: ${s.calendar.devOffset || 0} day(s).</p><button class="btn" data-act="devday">Skip to tomorrow</button></section>` : ''}
+    ${DEV_TOOLS && !app.mp ? `<section class="card"><div class="card-h"><h3>Testing tools</h3><span class="chip warn">Turn off before launch</span></div><p class="muted" style="font-size:14px;margin-top:0">Moves the game clock forward one day so you can try the daily loop without waiting. Clock offset: ${s.calendar.devOffset || 0} day(s).</p><button class="btn" data-act="devday">Skip to tomorrow</button></section>` : ''}
     <p class="legal"><a href="#legal">Terms & disclaimer</a> · Save version ${s.version}</p>`;
   },
 
@@ -455,6 +458,7 @@ function closeModal() { $$('.modal-back').forEach(x => x.remove()); }
 
 // ---------- actions ----------
 function run(cmd, okMsg) {
+  if (app.mp) return mpRun(cmd, okMsg);
   const r = G.dispatch(S(), cmd);
   if (!r.ok) { toast(r.msg, 'bad'); return r; }
   if (r.msg || okMsg) toast(r.msg || okMsg, 'ok');
@@ -467,7 +471,7 @@ const ACTIONS = {
     const sel = app.ui.sel;
     if (sel && app.view === 'squad' && P(d.id)?.clubId === me().id) {
       const c = me();
-      if (sel.startsWith('slot')) { const i = +sel.slice(4); const cur = c.lineup[i]; if (cur && cur !== d.id) run({ type: 'SWAP', a: cur, b: d.id }); else if (!cur) { c.lineup[i] = d.id; save(); } }
+      if (sel.startsWith('slot')) { const i = +sel.slice(4); const cur = c.lineup[i]; if (cur && cur !== d.id) run({ type: 'SWAP', a: cur, b: d.id }); else if (!cur) { if (app.mp) run({ type: 'SET_SLOT', i, playerId: d.id }); else { c.lineup[i] = d.id; save(); } } }
       else if (sel !== d.id) run({ type: 'SWAP', a: sel, b: d.id });
       app.ui.sel = null; render(); return;
     }
@@ -487,7 +491,7 @@ const ACTIONS = {
   mentality(d) { run({ type: 'SET_MENTALITY', mentality: d.m }); render(); },
   focus(d) { app.ui.focus = d.k; render(); },
   indiv(d) { const a = app.ui.indiv; const i = a.indexOf(d.id); if (i >= 0) a.splice(i, 1); else if (a.length < 3) a.push(d.id); else toast('You can coach up to 3 players individually.', 'bad'); render(); },
-  train() { const r = run({ type: 'TRAIN', focus: app.ui.focus, individual: app.ui.indiv }); if (r.ok) { app.ui.indiv = []; toast(`Session done. ${r.report.length} player${r.report.length === 1 ? '' : 's'} improved.`, 'ok'); render(); } },
+  train() { const r = run({ type: 'TRAIN', focus: app.ui.focus, individual: app.ui.indiv }); if (r.ok) { app.ui.indiv = []; if (r.report) toast(`Session done. ${r.report.length} player${r.report.length === 1 ? '' : 's'} improved.`, 'ok'); render(); } },
   fpos(d) { app.ui.filter.pos = d.v; render(); },
   div(d) { app.ui.divView = d.v; app.ui.mdView = null; render(); },
   md(d) { app.ui.mdView = Math.max(0, +d.v); render(); },
@@ -501,8 +505,8 @@ const ACTIONS = {
   renew(d) { run({ type: 'RENEW', playerId: d.id }); closeModal(); render(); },
   release(d) { const r = run({ type: 'RELEASE', playerId: d.id }); if (r.ok) { closeModal(); render(); } },
   build(d) { run({ type: 'BUILD', key: d.k }); render(); },
-  openmail(d) { const m = S().inbox.find(x => x.id === d.id); if (m) { m.read = true; save(); } if (app.view !== 'inbox') { app.ui.mailOpen = d.id; go('inbox'); return; } app.ui.mailOpen = app.ui.mailOpen === d.id ? null : d.id; render(); },
-  readall() { S().inbox.forEach(m => m.read = true); save(); render(); },
+  openmail(d) { const m = S().inbox.find(x => x.id === d.id); if (m) { if (app.mp && !m.read) run({ type: 'READ_MAIL', ids: [m.id] }); m.read = true; save(); } if (app.view !== 'inbox') { app.ui.mailOpen = d.id; go('inbox'); return; } app.ui.mailOpen = app.ui.mailOpen === d.id ? null : d.id; render(); },
+  readall() { if (app.mp) run({ type: 'READ_MAIL' }); S().inbox.forEach(m => m.read = true); save(); render(); },
   pref(d) { let v = d.v; if (v === 'true') v = true; else if (v === 'false') v = false; else if (/^\d+$/.test(v)) v = +v; app.prefs[d.k] = v; savePrefs(); render(); },
   pkcopy() { copyText($('#pk-out').value); },
   pkdownload() { download('bolzplatz-manager-pro-namepack.json', Pk.exportPack()); },
@@ -521,9 +525,9 @@ const ACTIONS = {
   asknew() { app.ui.confirmNew = true; render(); },
   cancelnew() { app.ui.confirmNew = false; render(); },
   newgame() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} app.state = null; app.ui.confirmNew = false; location.hash = ''; render(); },
-  devday() { G.devSkipDay(S()); const d = sync(); save(); render(); briefing(d); },
-  preview() { matchPreview(); },
-  quick() { quickResult(); },
+  devday() { if (app.mp) return; G.devSkipDay(S()); const d = sync(); save(); render(); briefing(d); },
+  preview() { if (!app.mp) matchPreview(); },
+  quick() { if (!app.mp) quickResult(); },
 };
 function copyText(t) {
   try { navigator.clipboard.writeText(t).then(() => toast('Copied to clipboard.', 'ok'), () => toast('Copy failed. Select the text and copy it yourself.', 'bad')); }
@@ -558,7 +562,7 @@ document.addEventListener('input', e => { const el = e.target; if (el.id === 'tp
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // ---------- day sync & briefing ----------
-function sync() { const d = G.syncClock(S()); save(); return d; }
+function sync() { if (app.mp) return null; const d = G.syncClock(S()); save(); return d; }
 function briefing(d) {
   if (!d || (!d.days && !d.streakBonus)) return;
   const s = S(), c = me();
@@ -612,16 +616,17 @@ function finishMatchday(watched) {
   showResults(u);
 }
 
-function showResults(u) {
+function showResults(u, opt = {}) {
   const s = S(), c = me();
   if (!u) return;
   const r = u.result, H = CL(u.home), A = CL(u.away);
   const myIdx = u.userSide;
+  const md = opt.md ?? s.md - 1;
   const myIds = r.sheets[myIdx].xi.map(p => p.id).concat(Object.keys(r.ps).filter(id => r.ps[id].subOn !== undefined && P(id)?.clubId === c.id));
-  const others = s.divisions.flatMap(d => (s.fixtures[d.id][s.md - 1] || []).filter(f => f !== s.fixtures[u.div][s.md - 1][u.idx]).map(f => ({ f, d })));
+  const others = opt.others ?? s.divisions.flatMap(d => (s.fixtures[d.id][md] || []).filter(f => f !== s.fixtures[u.div][md][u.idx]).map(f => ({ f, d })));
   const goals = r.events.filter(e => e.kind === 'goal');
-  const objs = s.today.objectives;
-  openModal(`<div class="row"><div><div class="kicker">Full time · matchday ${s.md}</div><h2>${r.score[myIdx] > r.score[1 - myIdx] ? 'Victory!' : r.score[myIdx] < r.score[1 - myIdx] ? 'Defeat' : 'A draw'}</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+  const objs = opt.objectives ?? s.today.objectives;
+  openModal(`<div class="row"><div><div class="kicker">Full time · matchday ${md + 1}</div><h2>${r.score[myIdx] > r.score[1 - myIdx] ? 'Victory!' : r.score[myIdx] < r.score[1 - myIdx] ? 'Defeat' : 'A draw'}</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
     <div class="versus"><div class="side">${crest(cv(H), 48)}<div class="nm" style="font-size:20px">${cn(H)}</div></div><div class="vs"><div class="score" style="font-size:46px">${r.score[0]}–${r.score[1]}</div></div><div class="side r">${crest(cv(A), 48)}<div class="nm" style="font-size:20px">${cn(A)}</div></div></div>
     ${goals.length ? `<div style="font-size:14px">${goals.map(g => `⚽ ${Math.round(g.t)}' ${esc(Pk.pshort(P(g.pid)) || '')} <span class="muted">(${g.team === 0 ? cs(H) : cs(A)}${g.penalty ? ', pen' : ''})</span>`).join(' · ')}</div>` : ''}
     <div class="grid2">
@@ -634,10 +639,12 @@ function showResults(u) {
   mountAds(document.querySelector('.modal'));
 }
 
-function watchMatch() {
+// replay: a match the league server already played (multiplayer). No half-time changes, nothing to commit.
+// live: a shared league match being played right now (first half only until half time).
+function watchMatch(replay = null, live = false) {
   const s = S(), c = me();
-  const pend = G.prepareMatchday(s); save();
-  const u = pend.user; if (!u) return;
+  const u = replay || G.prepareMatchday(s).user; if (!replay) save();
+  if (!u) return;
   const side = u.userSide;
   const home = decoratedSheet(u.result.sheets[0]), away = decoratedSheet(u.result.sheets[1]);
   const H = CL(u.home);
@@ -652,7 +659,7 @@ function watchMatch() {
         <div class="seg" id="m-cam">${[['broadcast', 'TV'], ['tactical', 'Tactical']].map(([v, l]) => `<button data-cam="${v}" class="${app.prefs.camera === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         <button class="btn small" id="m-snd" title="Stadium sound">${app.prefs.sound ? '🔊' : '🔇'}</button>
         ${app.voice.ok ? `<button class="btn small" id="m-voice" title="Commentary voice">${app.prefs.voice !== false ? '🎙️' : '🎙️✕'}</button>` : ''}
-        <button class="btn small" id="m-skip">Skip to full time</button>
+        ${live ? '' : '<button class="btn small" id="m-skip">Skip to full time</button>'}
       </div>
     </div>
     <aside class="feed"><div class="feed-h"><div class="label">${esc(Pk.cstadium(H))}</div><b>${esc(home.name)} v ${esc(away.name)}</b></div>
@@ -690,8 +697,8 @@ function watchMatch() {
       onReplay: on => { if (on) pop.innerHTML = ''; },
       onCard: (e, name) => { pop.innerHTML = `<div class="card-pop"><i style="background:${e.kind === 'yellow' ? '#ffd400' : '#e01b24'}"></i>${esc(name)}</div>`; setTimeout(() => { pop.innerHTML = ''; }, 2400); },
       onSub: (e, outN, inN) => { pop.innerHTML = `<div class="card-pop" style="font-size:15px"><span style="color:var(--pitch)">▲ ${esc(inN)}</span><span style="color:var(--red)">▼ ${esc(outN)}</span></div>`; setTimeout(() => { pop.innerHTML = ''; }, 2400); },
-      onHalfTime: st => { setTimeout(() => vo.stop(), 2500); watchedHalf = true; halftime(el, view, u, side, st); },
-      onFullTime: st => { showStats(st); fulltime(el, view, watchedHalf && !skipped); },
+      onHalfTime: st => { setTimeout(() => vo.stop(), 2500); watchedHalf = true; if (live) mpLiveHalftime(el, view, u, side, st); else if (replay) setTimeout(() => view.resume(), 2500); else halftime(el, view, u, side, st); },
+      onFullTime: st => { showStats(st); fulltime(el, view, watchedHalf && !skipped, replay || (live ? { ...u, result: view.result } : null)); },
     },
   });
   view.start();
@@ -699,11 +706,12 @@ function watchMatch() {
   $('#m-speed', el).addEventListener('click', e => { const b = e.target.closest('[data-sp]'); if (!b) return; const v = +b.dataset.sp; view.setSpeed(v); vo.speed = v; app.prefs.speed = v; savePrefs(); $$('#m-speed button', el).forEach(x => x.classList.toggle('on', x === b)); });
   $('#m-cam', el).addEventListener('click', e => { const b = e.target.closest('[data-cam]'); if (!b) return; view.setCamera(b.dataset.cam); app.prefs.camera = b.dataset.cam; savePrefs(); $$('#m-cam button', el).forEach(x => x.classList.toggle('on', x === b)); });
   $('#m-snd', el).addEventListener('click', e => { app.prefs.sound = !app.prefs.sound; savePrefs(); if (app.prefs.sound) app.audio.enable(); else app.audio.disable(); e.currentTarget.textContent = app.prefs.sound ? '🔊' : '🔇'; });
-  $('#m-skip', el).addEventListener('click', () => { vo.stop(); skipped = !watchedHalf; $$('.overlay', el).forEach(x => x.remove()); view.skipToEnd(); });
+  $('#m-skip', el)?.addEventListener('click', () => { vo.stop(); skipped = !watchedHalf; $$('.overlay', el).forEach(x => x.remove()); view.skipToEnd(); });
   app.matchView = view;
+  if (live) app.mp.liveView = { el, view, u, side, atHalf: false, applied: false };
 }
 
-function halftime(el, view, u, side, st) {
+function halftime(el, view, u, side, st, live = false) {
   const s = S();
   const T = u.result.ht.teams[side];
   const ov = document.createElement('div'); ov.className = 'overlay';
@@ -734,6 +742,7 @@ function halftime(el, view, u, side, st) {
     if (ment !== T.mentality) changes.mentality = ment;
     if (formation !== T.formation) changes.formation = formation;
     if (subs.length) changes.subs = subs;
+    if (live) { mpSendHalftime(ov, changes); return; }
     if (Object.keys(changes).length) {
       const r = G.halftimeChange(s, changes); save();
       // the re-simulated result includes the new bench/sub events; give the viewer the new names
@@ -747,7 +756,7 @@ function halftime(el, view, u, side, st) {
   });
 }
 
-function fulltime(el, view, watched) {
+function fulltime(el, view, watched, replay = null) {
   const ov = document.createElement('div'); ov.className = 'overlay';
   ov.innerHTML = `<div class="ov-card" style="width:min(460px,100%)"><div class="kicker" style="text-align:center">Full time</div><div class="ft-score">${esc(view.home.short)} ${view.score[0]}–${view.score[1]} ${esc(view.away.short)}</div><button class="btn primary" id="ft-go" style="justify-self:center">See ratings & results</button></div>`;
   setTimeout(() => $('.pitch-wrap', el).appendChild(ov), 1200);
@@ -755,7 +764,7 @@ function fulltime(el, view, watched) {
     if (!e.target.closest('#ft-go')) return;
     view.destroy(); el.remove(); document.body.style.overflow = '';
     app.audio.disable(); app.voice.stop();
-    finishMatchday(watched);
+    if (replay) mpShowMatchResult(replay); else finishMatchday(watched);
   });
 }
 
@@ -811,8 +820,214 @@ ACTIONS.start = () => {
     <button class="btn primary" data-act="close">Let's go</button>`), 60);
 };
 
+// ---------- shared league (only when opened from the game hub with #hub=...) ----------
+// The league server owns the state and runs every rule; this page sends commands and shows what it gets back.
+const mpMe = () => app.mp?.hub.user?.id;
+function mpIsReady() { return !!app.mp && app.mp.ready.includes(mpMe()); }
+function mpLobbyUrl() { return app.mp.hub.origin + '/?room=' + encodeURIComponent(app.mp.room.code); }
+// Keep the launch fragment in the address bar while moving between screens, so a reload rejoins the league.
+function mpKeepLaunch() { try { history.replaceState(null, '', '#' + app.mp.launch + '&v=' + app.view); } catch (e) {} }
+function mpHeroRow() {
+  const n = app.mp.ready.length, total = S().mp.managers.length;
+  const last = S().mp.lastMatch, L = S().mp.live;
+  if (L) return `<button class="btn primary" data-act="mplive">▶ ${L.phase === 'first' ? 'Watch live' : 'Watch your match'}</button>
+    <span class="sp"></span><div><div class="label">Matchday under way · ${L.phase === 'first' ? 'second half starts at the latest in' : 'results are official in'}</div><div class="countdown" data-countdown>${fmtDur(msToMidnight())}</div></div>`;
+  return `<button class="btn ${mpIsReady() ? '' : 'primary'}" data-act="mpready">${mpIsReady() ? 'Not ready yet' : '✓ Ready for the matchday'}</button>
+    ${last ? '<button class="btn ghost" data-act="mplast">Last matchday</button>' : ''}
+    <span class="sp"></span><div><div class="label">${n} of ${total} manager${total === 1 ? '' : 's'} ready · plays at the latest in</div><div class="countdown" data-countdown>${app.mp.nextAt ? fmtDur(msToMidnight()) : '--:--:--'}</div></div>`;
+}
+function mpManagersCard() {
+  const s = S();
+  const rows = s.mp.managers.map(m => { const c = CL(m.clubId); const r = c ? G.computeTable(s, c.divisionId).find(x => x.id === c.id) : null;
+    return `<tr class="${m.clubId === me().id ? 'me' : ''}"><td>${app.mp.ready.includes(m.id) ? '<span class="chip ok">Ready</span>' : '<span class="chip">Busy</span>'}</td><td><b>${esc(m.name)}</b></td><td>${c ? `<span class="pl">${crest(cv(c), 18)}${cs(c)}</span>` : ''}</td><td class="n">${r ? G.ordinal(r.pos) : ''}</td></tr>`; }).join('');
+  return `<section class="card"><div class="card-h"><h3>Managers</h3><span class="label">Streak ${s.calendar.streak} · best ${s.calendar.bestStreak}</span></div>
+    <table><tbody>${rows}</tbody></table>
+    <p class="muted" style="margin:10px 0 0;font-size:14px">The matchday is played for everyone when all managers are ready, or at the deadline. If you are away, your assistant plays your match.</p></section>`;
+}
+function mpRun(cmd, okMsg) {
+  const id = ++app.mp.seq;
+  app.mp.pending[id] = { cmd, okMsg };
+  app.mp.room.sendGame({ k: 'cmd', id, cmd });
+  return { ok: true, sent: true };
+}
+function mpShowLastResult() { const lm = S()?.mp?.lastMatch; if (lm) mpShowMatchResult(lm); }
+// Ratings & results for a league match. Before the results are official (a live matchday), there are no
+// other results or objectives to show yet.
+function mpShowMatchResult(u) {
+  const s = S(), lm = s.mp.lastMatch;
+  app.mp.seen = mpKey(u);
+  const official = lm && mpKey(lm) === mpKey(u);
+  showResults(u, { md: u.md, objectives: official ? s.mp.yesterday?.objectives || [] : [], others: official && u.season === s.season ? null : [] });
+}
+const mpKey = u => u ? u.season + ':' + u.md : null;
+
+// ---------- live matchday ----------
+// Kick-off: every manager's match starts at the same moment. Opens the match by itself unless dismissed.
+function mpLiveCheck() {
+  const mp = app.mp, L = S()?.mp?.live, lm = L?.match;
+  if (mp.liveView && !$('.match')) mp.liveView = null;
+  if (mp.liveView) { if (mp.liveView.atHalf && !mp.liveView.applied && (!L || L.phase !== 'first')) mpApplySecond(); return; }
+  if (!lm || L.phase !== 'first' || mp.koDismissed === mpKey(lm) || $('.match')) return;
+  if ($('#ko-modal')) return;
+  closeModal();
+  openModal(`<div id="ko-modal" style="display:grid;gap:14px"><div class="kicker">Matchday ${lm.md + 1} · live</div>
+    <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
+    ${lm.opponentManager ? `<div class="notice">You are up against <b>${esc(lm.opponentManager)}</b>. You can both change tactics at half time.</div>` : ''}
+    <div class="row"><div><div class="label">Kick-off in</div><div class="countdown" id="ko-cd">--</div></div><span class="sp"></span><button class="btn primary" data-act="mplive">▶ Watch now</button><button class="btn ghost" data-act="mpnolive">Not now</button></div></div>`);
+  clearInterval(mp.koTimer);
+  mp.koTimer = setInterval(() => {
+    const cd = $('#ko-cd'); if (!cd) return clearInterval(mp.koTimer);
+    const ms = L.kickoffAt - mp.room.serverNow();
+    cd.textContent = ms > 0 ? Math.ceil(ms / 1000) + 's' : 'now';
+    if (ms <= 0) { clearInterval(mp.koTimer); ACTIONS.mplive(); }
+  }, 250);
+}
+ACTIONS.mplive = () => {
+  const L = S()?.mp?.live; if (!L?.match || $('.match')) return;
+  closeModal(); clearInterval(app.mp.koTimer);
+  if (L.phase === 'first') watchMatch(L.match, true);
+  else watchMatch(L.match); // second half already decided: watch the whole match
+};
+ACTIONS.mpnolive = () => { const lm = S()?.mp?.live?.match; app.mp.koDismissed = mpKey(lm); clearInterval(app.mp.koTimer); closeModal(); };
+
+// Half time in a live match: the usual team-talk panel, but the changes go to the server, which plays the
+// second half once both managers are done (or the half-time window closes).
+function mpLiveHalftime(el, view, u, side, st) {
+  const lv = app.mp.liveView; if (!lv) return;
+  lv.atHalf = true;
+  const L = S().mp.live;
+  if (!L || L.phase !== 'first' || L.match?.htDone) return mpWaitSecond(el, 'Waiting for the second half…');
+  halftime(el, view, u, side, st, true);
+}
+function mpSendHalftime(ov, changes) {
+  app.mp.room.sendGame({ k: 'ht', changes });
+  ov.remove();
+  const opp = S().mp.live?.match?.opponentManager;
+  mpWaitSecond(app.mp.liveView.el, opp ? `Waiting for ${esc(opp)}…` : 'Waiting for the second half…');
+}
+function mpWaitSecond(el, text) {
+  const lv = app.mp.liveView; if (!lv) return;
+  if (S().mp.live?.phase !== 'first') return mpApplySecond();
+  const ov = document.createElement('div'); ov.className = 'overlay'; ov.id = 'ht-wait';
+  ov.innerHTML = `<div class="ov-card" style="width:min(460px,100%);text-align:center"><div class="kicker">Half time</div><h2>${text}</h2><div class="label">The second half starts at the latest in</div><div class="countdown" id="ht-cd">--</div></div>`;
+  $('.pitch-wrap', el).appendChild(ov);
+  clearInterval(app.mp.htTimer);
+  app.mp.htTimer = setInterval(() => { const c = $('#ht-cd'); if (!c) return clearInterval(app.mp.htTimer); c.textContent = fmtDur(Math.max(0, (S().mp.live?.htCloseAt || 0) - app.mp.room.serverNow())); }, 500);
+}
+// The server has played the second half: swap it in and kick off at the shared time.
+function mpApplySecond() {
+  const lv = app.mp.liveView; if (!lv || lv.applied) return;
+  const L = S().mp.live, lm = S().mp.lastMatch;
+  const full = L?.match && L.phase !== 'first' ? L.match : lm && lm.md === lv.u.md && lm.season === lv.u.season ? lm : null;
+  if (!full) return;
+  lv.applied = true;
+  clearInterval(app.mp.htTimer);
+  $$('.overlay', lv.el).forEach(x => x.remove());
+  const r = full.result, ch = full.changes || [null, null], view = lv.view;
+  ch.forEach((c, k) => { if (c?.subs?.length) { const dec = decoratedSheet({ ...r.sheets[k], bench: r.ht.teams[k].bench.map(b => ({ ...b })) }); view.sheets[k].bench = dec.bench.concat(view.sheets[k].bench || []); } });
+  view.replaceSecondHalf(r);
+  ch.forEach((c, k) => { if (c?.formation) view.applyFormation(k, c.formation); });
+  const wait = Math.max(0, (L?.secondAt || 0) - app.mp.room.serverNow());
+  setTimeout(() => { if (!lv.view.destroyed) lv.view.resume(); }, wait);
+}
+ACTIONS.mpready = () => { if (!app.mp) return; app.mp.room.sendGame({ k: 'ready', ready: !mpIsReady() }); };
+ACTIONS.mplast = () => { closeModal(); mpShowLastResult(); };
+ACTIONS.mpwatch = () => { const lm = S()?.mp?.lastMatch; if (!lm) return; closeModal(); watchMatch(lm); };
+function mpScreen(title, body, actions = '') {
+  $('#app').innerHTML = `<div class="title"><div class="title-in"><h1>Matchday <b>Legends</b></h1><div class="card" style="display:grid;gap:12px;background:rgba(18,26,35,.92)"><h2>${title}</h2><p class="muted" style="margin:0">${body}</p>${actions ? `<div class="row">${actions}</div>` : ''}</div></div></div>`;
+}
+function mpOnGame(m) {
+  const mp = app.mp; if (!mp) return;
+  if (m.k === 'state') {
+    if (!m.view) { app.state = null; mpScreen('No club for you here', 'You are not managing a club in this league.', `<a class="btn primary" href="${esc(mpLobbyUrl())}">Back to the lobby</a>`); return; }
+    const old = app.state;
+    if (old?.today && m.view.today && old.calendar.day === m.view.calendar.day) { m.view.today.teamSet ||= old.today.teamSet; m.view.today.marketSeen ||= old.today.marketSeen; }
+    app.state = m.view;
+    if (m.ready) mp.ready = m.ready;
+    if (m.nextAt !== undefined) mp.nextAt = m.nextAt;
+    if (!$('.match')) render();
+    if (!old) mpKeepLaunch();
+    mpLiveCheck();
+  } else if (m.k === 'cmdResult') {
+    const p = mp.pending[m.id]; delete mp.pending[m.id];
+    const r = m.res || {};
+    if (!r.ok) toast(r.msg || 'That did not work.', 'bad');
+    else if (p?.cmd.type === 'TRAIN' && r.report) toast(`Session done. ${r.report.length} player${r.report.length === 1 ? '' : 's'} improved.`, 'ok');
+    else if (r.msg || p?.okMsg) toast(r.msg || p.okMsg, 'ok');
+  } else if (m.k === 'ready') {
+    mp.ready = m.ready || [];
+    if (app.state && app.view === 'today' && !$('.match') && !$('.modal-back')) render();
+  } else if (m.k === 'day') {
+    if (m.nextAt !== undefined) mp.nextAt = m.nextAt;
+    mp.ready = [];
+    if (!app.state || $('.match')) return;
+    render();
+    const lm = S().mp.lastMatch;
+    if (!lm) return;
+    if (mp.seen === mpKey(lm)) { toast('The matchday results are official.', 'ok'); return; }
+    // never show the score before the manager has had the chance to watch
+    closeModal();
+    openModal(`<div class="row"><div><div class="kicker">Matchday ${lm.md + 1} has been played</div><h2>Your match is ready</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+      <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
+      ${m.digest?.newSeason ? '<div class="notice">The season is over. Your season review is in the inbox.</div>' : ''}
+      <div class="row"><button class="btn primary" data-act="mpwatch">▶ Watch the match</button><button class="btn" data-act="mplast">Just show me the result</button><button class="btn ghost" data-act="close">Later</button></div>`);
+  } else if (m.k === 'joined' || m.k === 'left') {
+    const who = app.state?.mp?.managers.find(x => x.id === m.pid)?.name;
+    if (m.k === 'left' && who) toast(`${who} left the league. The computer runs their club now.`);
+  }
+}
+// Only hubs on the allow-list (config.js), so a crafted link can't make this page run someone else's script.
+function trustedHub(h) {
+  if (!h) return null;
+  let u; try { u = new URL(h); } catch (e) { return null; }
+  if (HUB_ORIGINS.includes(u.origin)) return u.origin;
+  const local = x => x === 'localhost' || x === '127.0.0.1';
+  if (u.protocol === 'http:' && local(u.hostname) && local(location.hostname)) return u.origin;
+  return null;
+}
+async function bootHub() {
+  const hash = location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  const v = params.get('v'); params.delete('v');
+  mpScreen('Joining your league…', 'Connecting to the game server.');
+  const fallback = why => {
+    try { app.mp?.room?.close(); } catch (e) {}
+    app.mp = null; app.state = null;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    boot();
+    toast(why, 'bad');
+  };
+  let Hub;
+  try { ({ Hub } = await import(trustedHub(params.get('hub')) + '/hub-client.js')); }
+  catch (e) { return fallback('Could not reach the game server. Playing single player instead.'); }
+  const hub = Hub.fromLaunch('#' + params.toString());
+  if (!hub) return fallback('That league link is incomplete. Playing single player instead.');
+  const room = hub.joinRoom(hub.launch.room);
+  app.mp = { hub, room, launch: params.toString(), ready: [], nextAt: null, seq: 0, pending: {} };
+  app.view = VIEWS[v] ? v : 'today';
+  room.on('game', mpOnGame);
+  room.on('fail', () => fallback('That league is not available any more. Playing single player instead.'));
+  room.on('room', m => {
+    // opened after the league ended, or before it started: there is no league state to show
+    const ph = m.room?.phase;
+    if (!app.state && app.mp && (ph === 'done' || ph === 'waiting')) mpScreen(ph === 'done' ? 'This league is over' : 'The league has not started yet', ph === 'done' ? 'See the final table in the lobby.' : 'The host starts it from the lobby.', `<a class="btn primary" href="${esc(mpLobbyUrl())}">Back to the lobby</a>`);
+  });
+  room.on('removed', () => { if (app.mp) mpScreen('You left the league', 'Your club is run by the computer now.', `<a class="btn primary" href="${esc(mpLobbyUrl())}">Back to the lobby</a>`); });
+  room.on('closed', () => { if (app.mp && !app.mp.result) mpScreen('The league has closed', 'This room is no longer open.', `<a class="btn primary" href="${esc(mpLobbyUrl())}">Back to the lobby</a>`); });
+  room.on('result', m => {
+    if (!app.mp) return;
+    const res = m.result || {}; app.mp.result = res;
+    const rows = (res.players || []).slice().sort((a, b) => (a.place ?? 99) - (b.place ?? 99)).map(p => `<tr class="${p.id === mpMe() ? 'me' : ''}"><td class="n">${p.place ?? '–'}</td><td><b>${esc(p.name || '')}</b></td><td class="n">${p.score ?? ''}</td></tr>`).join('');
+    closeModal();
+    openModal(`<div class="kicker">The league is over</div><h2>Final standings</h2><table><thead><tr><th class="n">#</th><th>Manager</th><th class="n">Points</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="row"><a class="btn primary" href="${esc(mpLobbyUrl())}">Back to the lobby</a><button class="btn ghost" data-act="close">Look around</button></div>`);
+  });
+}
+
 // ---------- boot ----------
 function boot() {
+  // Opened from the game hub's lobby: play in a shared league. Without #hub= nothing below changes.
+  if (trustedHub(new URLSearchParams(location.hash.slice(1)).get('hub'))) { bootHub(); return; }
   const saved = loadSave();
   const v = location.hash.slice(1);
   if (saved) {

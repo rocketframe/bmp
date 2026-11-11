@@ -72,6 +72,20 @@ export function simulateMatch(home, away, seed, opts = {}) {
 // Halftime team talk: re-simulate the second half after the human changes tactics or makes subs.
 export function resimSecondHalf(result, teamIdx, changes, seed) {
   const st = clone(result.ht);
+  applyHalftime(st, teamIdx, changes);
+  const rng = makeRng(seed);
+  simHalf(st, 2, rng);
+  return finalize(st, result.ht, result.sheets[0], result.sheets[1], result.seed);
+}
+// Multiplayer: both managers can make half-time changes in the same match. byTeam = [changes|null, changes|null].
+export function resimSecondHalfBoth(result, byTeam, seed) {
+  const st = clone(result.ht);
+  byTeam.forEach((ch, k) => { if (ch) applyHalftime(st, k, ch); });
+  const rng = makeRng(seed);
+  simHalf(st, 2, rng);
+  return finalize(st, result.ht, result.sheets[0], result.sheets[1], result.seed);
+}
+function applyHalftime(st, teamIdx, changes) {
   const T = st.teams[teamIdx];
   if (changes.mentality) T.mentality = changes.mentality;
   if (changes.formation && FORMATIONS[changes.formation]) {
@@ -104,9 +118,6 @@ export function resimSecondHalf(result, teamIdx, changes, seed) {
     st.events.push({ t: 45, half: 2, team: teamIdx, kind: 'sub', outId: out.id, inId: inn.id, slot: out.slot });
   }
   T.human = true; T.manual = true;
-  const rng = makeRng(seed);
-  simHalf(st, 2, rng);
-  return finalize(st, result.ht, result.sheets[0], result.sheets[1], result.seed);
 }
 
 function touch(st, id) { return st.ps[id] || (st.ps[id] = { goals: 0, assists: 0, shots: 0, saves: 0, tackles: 0, key: 0, yellow: 0, red: 0, injury: 0 }); }

@@ -22,10 +22,19 @@ function stepRng(state) { const r = makeRng(state.rngState || state.seed); retur
 export function human(state) { return state.clubs[state.humans[0]]; }
 export function isHuman(state, clubId) { return state.humans.includes(clubId); }
 
+// Per-manager parts (today, inbox, history, streak). Single player keeps them on the state itself, exactly
+// as before. A multiplayer league (js/server/league.js) keeps one slot per human club in state.mgrs.
+export function mgrOf(state, clubId) { return state.mgrs ? state.mgrs[clubId ?? state.humans[0]] : state; }
+// The human clubs that get per-manager processing (single player: just the one).
+const managed = state => (state.mgrs ? state.humans.slice() : [state.humans[0]]);
+
 let inboxSeq = 0;
-export function mail(state, title, body, kind = 'info', extra = {}) {
-  state.inbox.unshift({ id: 'm' + state.calendar.day + '-' + (++inboxSeq) + '-' + state.inbox.length, day: state.calendar.day, title, body, kind, read: false, ...extra });
-  if (state.inbox.length > 80) state.inbox.length = 80;
+export function mail(state, title, body, kind = 'info', extra = {}, clubId) {
+  const box = mgrOf(state, clubId);
+  if (!box) return; // multiplayer: that club has no manager
+  const id = state.mgrs ? 'm' + (state.mailSeq = (state.mailSeq || 0) + 1) : 'm' + state.calendar.day + '-' + (++inboxSeq) + '-' + box.inbox.length;
+  box.inbox.unshift({ id, day: state.calendar.day, title, body, kind, read: false, ...extra });
+  if (box.inbox.length > 80) box.inbox.length = 80;
 }
 function news(state, text) { state.news.unshift({ day: state.calendar.day, text }); if (state.news.length > 40) state.news.length = 40; }
 
@@ -48,16 +57,17 @@ export function newGame({ seed, managerName, clubId, world, now = new Date() }) 
 }
 
 function setBoardTarget(state) {
-  for (const id of state.humans) {
-    const c = state.clubs[id];
-    const div = divisionOf(state, id);
-    const ranked = div.clubIds.slice().sort((a, b) => state.clubs[b].rep - state.clubs[a].rep);
-    const r = ranked.indexOf(id) + 1;
-    c.board = { target: Math.min(LEAGUE.clubsPerDivision - 2, Math.max(1, r + 1)), confidence: c.board?.confidence ?? 65 };
-  }
+  for (const id of state.humans) setBoardTargetFor(state, id);
 }
-export function boardLine(state) {
-  const c = human(state); const t = c.board.target;
+export function setBoardTargetFor(state, id) {
+  const c = state.clubs[id];
+  const div = divisionOf(state, id);
+  const ranked = div.clubIds.slice().sort((a, b) => state.clubs[b].rep - state.clubs[a].rep);
+  const r = ranked.indexOf(id) + 1;
+  c.board = { target: Math.min(LEAGUE.clubsPerDivision - 2, Math.max(1, r + 1)), confidence: c.board?.confidence ?? 65 };
+}
+export function boardLine(state, clubId) {
+  const c = clubId ? state.clubs[clubId] : human(state); const t = c.board.target;
   return t <= 1 ? 'The board expects the title.' : `The board expects a finish of ${ordinal(t)} or better.`;
 }
 export const ordinal = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
@@ -68,17 +78,21 @@ const OBJECTIVES = {
   score2: { label: 'Score at least 2 goals', w: 2 },
   clean: { label: 'Keep a clean sheet', w: 2 },
   train: { label: 'Run a training session', w: 3 },
-  watch: { label: 'Watch the match live', w: 2 },
+  watch: { label: 'Watch the match live', w: 2, live: true },
   scout: { label: 'Send a scout to watch a player', w: 1.5 },
   bid: { label: 'Make a bid or sign a player', w: 1 },
   crowd: { label: 'Fill 90% of your stadium', w: 1.5, homeOnly: true },
 };
 function startDay(state) {
-  const rng = rngFor(state, 'day');
-  const c = human(state);
+  for (const id of managed(state)) startDayFor(state, id);
+}
+export function startDayFor(state, clubId) {
+  const rng = state.mgrs ? rngFor(state, 'day', clubId) : rngFor(state, 'day');
+  const c = state.clubs[clubId];
   const fx = fixtureFor(state, c.id);
   const home = fx && fx.h === c.id;
-  const pool = Object.entries(OBJECTIVES).filter(([k, o]) => !o.homeOnly || home);
+  // multiplayer matchdays are played by the server, so there is no live match to watch
+  const pool = Object.entries(OBJECTIVES).filter(([k, o]) => (!o.homeOnly || home) && !(state.mgrs && o.live));
   const picks = [];
   while (picks.length < 3 && pool.length) {
     const o = rng.weighted(pool, e => e[1].w); pool.splice(pool.indexOf(o), 1);
@@ -86,18 +100,18 @@ function startDay(state) {
     picks.push(o[0]);
   }
   const base = c.divisionId === 'd1' ? 90000 : 30000;
-  state.today = {
+  mgrOf(state, clubId).today = {
     md: state.md, played: false, trained: false, watched: false, pending: null,
     objectives: picks.map(k => ({ key: k, label: OBJECTIVES[k].label, reward: roundMoney(base * rng.range(0.8, 1.6)), done: false })),
     scoutsUsed: 0, report: null,
   };
 }
 
-export function completeObjective(state, key) {
-  const o = state.today?.objectives.find(x => x.key === key && !x.done);
+export function completeObjective(state, key, clubId) {
+  const o = mgrOf(state, clubId)?.today?.objectives.find(x => x.key === key && !x.done);
   if (!o) return null;
   o.done = true;
-  ledger(human(state), 'bonus', o.reward, state, `Daily objective: ${o.label}`);
+  ledger(state.clubs[clubId ?? state.humans[0]], 'bonus', o.reward, state, `Daily objective: ${o.label}`);
   return o;
 }
 
@@ -158,8 +172,10 @@ export function devSkipDay(state) {
 
 // ---------- matchday ----------
 export function prepareMatchday(state) {
-  if (state.today.pending) return state.today.pending;
+  const hold = state.mgrs ? state : state.today;
+  if (hold.pending) return hold.pending;
   const out = { fixtures: [], user: null };
+  if (state.mgrs) out.byClub = {};
   for (const div of state.divisions) {
     const round = state.fixtures[div.id][state.md] || [];
     round.forEach((f, i) => {
@@ -170,9 +186,13 @@ export function prepareMatchday(state) {
       const entry = { div: div.id, idx: i, h: f.h, a: f.a, result };
       out.fixtures.push(entry);
       if (H.human || A.human) out.user = { ...entry, home: f.h, away: f.a, userSide: H.human ? 0 : 1 };
+      if (out.byClub) {
+        if (H.human) out.byClub[f.h] = { ...entry, home: f.h, away: f.a, userSide: 0 };
+        if (A.human) out.byClub[f.a] = { ...entry, home: f.h, away: f.a, userSide: 1 };
+      }
     });
   }
-  state.today.pending = out;
+  hold.pending = out;
   return out;
 }
 
@@ -188,7 +208,8 @@ export function halftimeChange(state, changes) {
 }
 
 export function commitMatchday(state) {
-  const p = state.today.pending || prepareMatchday(state);
+  const hold = state.mgrs ? state : state.today;
+  const p = hold.pending || prepareMatchday(state);
   const rng = rngFor(state, 'commit');
   const tableCache = {};
   for (const div of state.divisions) tableCache[div.id] = computeTable(state, div.id);
@@ -208,18 +229,40 @@ export function commitMatchday(state) {
   }
   const allFixtures = state.divisions.flatMap(div => state.fixtures[div.id][state.md]);
   settleMatchdayFinances(state, allFixtures, posOf, rng);
-  if (p.user) {
-    const u = p.user, side = u.userSide, s = u.result.score;
-    const f = state.fixtures[u.div][state.md][u.idx];
-    state.today.report = { home: u.home, away: u.away, score: s.slice(), motm: u.result.motm, att: f.r.att };
-    if (s[side] > s[1 - side]) completeObjective(state, 'win');
-    if (s[side] >= 2) completeObjective(state, 'score2');
-    if (s[1 - side] === 0) completeObjective(state, 'clean');
-    if (u.home === userId) { const c = state.clubs[userId]; if (f.r.att >= c.stadium.capacity * 0.9) completeObjective(state, 'crowd'); }
-  }
+  if (state.mgrs) {
+    for (const id of state.humans) { if (p.byClub[id]) matchReport(state, p.byClub[id], id); mgrOf(state, id).today.played = true; }
+  } else if (p.user) matchReport(state, p.user, userId);
   state.md++;
-  state.today.played = true;
-  state.today.pending = null;
+  if (!state.mgrs) state.today.played = true;
+  hold.pending = null;
+}
+function matchReport(state, u, userId) {
+  const side = u.userSide, s = u.result.score;
+  const f = state.fixtures[u.div][state.md][u.idx];
+  mgrOf(state, userId).today.report = { home: u.home, away: u.away, score: s.slice(), motm: u.result.motm, att: f.r.att };
+  if (s[side] > s[1 - side]) completeObjective(state, 'win', userId);
+  if (s[side] >= 2) completeObjective(state, 'score2', userId);
+  if (s[1 - side] === 0) completeObjective(state, 'clean', userId);
+  if (u.home === userId) { const c = state.clubs[userId]; if (f.r.att >= c.stadium.capacity * 0.9) completeObjective(state, 'crowd', userId); }
+}
+
+// Multiplayer: the server plays the matchday for every club at once and then runs the night.
+// Returns each human club's match (with the full timeline, so browsers can replay it).
+export function playDayAll(state) {
+  const p = prepareMatchday(state);
+  const md = state.md, season = state.season;
+  const matches = {};
+  for (const id of state.humans) if (p.byClub[id]) matches[id] = p.byClub[id];
+  commitMatchday(state);
+  for (const id of state.humans) {
+    const t = mgrOf(state, id).today;
+    mgrOf(state, id).yesterday = { md, season, report: t.report, objectives: t.objectives, trained: t.trained, trainingReport: t.trainingReport || null };
+  }
+  overnight(state);
+  state.calendar.day++;
+  if (state.md >= seasonLength(state)) endSeason(state);
+  startDay(state);
+  return { md, season, matches };
 }
 
 function applyPlayerOutcomes(state, e, rng) {
@@ -241,9 +284,9 @@ function applyPlayerOutcomes(state, e, rng) {
     p.form = clamp(p.form * 0.65 + rating * 0.35, 3, 10);
     p.fitness = clamp(finalFit[id] ?? (p.fitness - 22), 25, 100);
     p.xp = (p.xp || 0) + 1;
-    if (s.yellow) { p.stats.yellows++; if (p.stats.yellows % 5 === 0) { p.suspended = 1; if (isHumanPlayer(state, p)) mail(state, `${fullName(p)} suspended`, `${fullName(p)} picked up a fifth yellow card and misses the next match.`, 'squad'); } }
-    if (s.red) { p.stats.reds++; p.suspended = rng.int(1, 3); if (isHumanPlayer(state, p)) mail(state, `${fullName(p)} sent off`, `${fullName(p)} is suspended for ${p.suspended} match${p.suspended > 1 ? 'es' : ''}.`, 'squad'); }
-    if (s.injury) { p.injury = s.injury * 3; if (isHumanPlayer(state, p)) mail(state, `Injury: ${fullName(p)}`, `The physio expects ${fullName(p)} to be out for about ${p.injury} days.`, 'squad'); }
+    if (s.yellow) { p.stats.yellows++; if (p.stats.yellows % 5 === 0) { p.suspended = 1; if (isHumanPlayer(state, p)) mail(state, `${fullName(p)} suspended`, `${fullName(p)} picked up a fifth yellow card and misses the next match.`, 'squad', {}, p.clubId); } }
+    if (s.red) { p.stats.reds++; p.suspended = rng.int(1, 3); if (isHumanPlayer(state, p)) mail(state, `${fullName(p)} sent off`, `${fullName(p)} is suspended for ${p.suspended} match${p.suspended > 1 ? 'es' : ''}.`, 'squad', {}, p.clubId); }
+    if (s.injury) { p.injury = s.injury * 3; if (isHumanPlayer(state, p)) mail(state, `Injury: ${fullName(p)}`, `The physio expects ${fullName(p)} to be out for about ${p.injury} days.`, 'squad', {}, p.clubId); }
   }
   // suspensions served by players who were suspended and didn't play
   for (const cid of [e.h, e.a]) for (const pid of state.clubs[cid].playerIds) {
@@ -284,7 +327,6 @@ function runTraining(state, club, focusKey, individual, rng, isAuto) {
 // ---------- overnight ----------
 function overnight(state) {
   const rng = rngFor(state, 'night');
-  const userId = state.humans[0];
   // AI training and recovery
   for (const c of Object.values(state.clubs)) {
     if (!c.human) runTraining(state, c, 'balanced', [], rng, true);
@@ -299,25 +341,26 @@ function overnight(state) {
   // scouting
   for (const s of state.scouting.filter(s => s.readyDay <= state.calendar.day + 1)) {
     const p = state.players[s.playerId]; if (!p) continue;
-    p.scouted = true;
-    mail(state, `Scout report: ${fullName(p)}`, `${fullName(p)} (${p.age}, ${p.pos}) is rated ${p.skill} now, with potential to reach about ${p.potential}. ${p.potential - p.skill > 10 ? 'Our scout thinks he could become a star.' : p.potential - p.skill > 4 ? 'There is room to grow.' : 'He is close to his ceiling.'}`, 'scout', { playerId: p.id });
+    if (state.mgrs) { const m = mgrOf(state, s.clubId); if (!m) continue; (m.scouted ||= {})[p.id] = 1; } // each manager's scouting is private
+    else p.scouted = true;
+    mail(state, `Scout report: ${fullName(p)}`, `${fullName(p)} (${p.age}, ${p.pos}) is rated ${p.skill} now, with potential to reach about ${p.potential}. ${p.potential - p.skill > 10 ? 'Our scout thinks he could become a star.' : p.potential - p.skill > 4 ? 'There is room to grow.' : 'He is close to his ceiling.'}`, 'scout', { playerId: p.id }, s.clubId);
   }
   state.scouting = state.scouting.filter(s => s.readyDay > state.calendar.day + 1);
   // builds
   for (const b of state.builds.filter(b => b.readyDay <= state.calendar.day + 1)) {
     const c = state.clubs[b.clubId];
-    if (b.kind === 'stadium') { c.stadium.capacity += b.amount; mail(state, 'Stadium expansion complete', `${c.stadium.name} now holds ${c.stadium.capacity.toLocaleString()} fans.`, 'club'); }
-    if (b.kind === 'training') { c.facilities.training++; mail(state, 'Training ground upgraded', `The training ground is now level ${c.facilities.training}. Players improve faster.`, 'club'); }
-    if (b.kind === 'youth') { c.facilities.youth++; mail(state, 'Youth academy upgraded', `The academy is now level ${c.facilities.youth}. Better prospects will come through.`, 'club'); }
+    if (b.kind === 'stadium') { c.stadium.capacity += b.amount; mail(state, 'Stadium expansion complete', `${c.stadium.name} now holds ${c.stadium.capacity.toLocaleString()} fans.`, 'club', {}, c.id); }
+    if (b.kind === 'training') { c.facilities.training++; mail(state, 'Training ground upgraded', `The training ground is now level ${c.facilities.training}. Players improve faster.`, 'club', {}, c.id); }
+    if (b.kind === 'youth') { c.facilities.youth++; mail(state, 'Youth academy upgraded', `The academy is now level ${c.facilities.youth}. Better prospects will come through.`, 'club', {}, c.id); }
   }
   state.builds = state.builds.filter(b => b.readyDay > state.calendar.day + 1);
   // expire offers
   state.offers = state.offers.filter(o => o.status === 'open' && o.expires > state.calendar.day);
   aiTransfers(state, rng);
-  incomingOffers(state, rng);
-  if ((state.calendar.day + 1) % 7 === 0) youthProspect(state, rng);
+  for (const id of managed(state)) incomingOffers(state, rng, id);
+  if ((state.calendar.day + 1) % 7 === 0) for (const id of managed(state)) youthProspect(state, rng, id);
   for (const c of Object.values(state.clubs)) if (!c.human) autoLineup(state, c);
-  repairLineup(state, state.clubs[userId]);
+  for (const id of managed(state)) repairLineup(state, state.clubs[id]);
 }
 
 // ---------- transfers ----------
@@ -340,21 +383,23 @@ function resolveBids(state, rng) {
     const p = state.players[b.playerId]; const buyer = state.clubs[b.clubId];
     if (!p || p.clubId === b.clubId) continue;
     const seller = state.clubs[p.clubId];
+    // the player left his club since the bid, or (multiplayer) another manager signed him first
+    if (!seller || seller.human) { mail(state, `Bid lapsed: ${fullName(p)}`, `${fullName(p)} is no longer at the club we bid to, so the bid lapsed.`, 'transfer', {}, b.clubId); continue; }
     const ask = askingPrice(state, p);
     const thresh = ask * rng.range(0.9, 1.08);
     if (b.fee < thresh) {
       const hint = roundMoney(ask * 1.02);
-      mail(state, `Bid rejected: ${fullName(p)}`, `${seller.name} turned down ${money(b.fee)} for ${fullName(p)}. Our sources say a bid of around ${money(hint)} might do it.`, 'transfer', { playerId: p.id });
+      mail(state, `Bid rejected: ${fullName(p)}`, `${seller.name} turned down ${money(b.fee)} for ${fullName(p)}. Our sources say a bid of around ${money(hint)} might do it.`, 'transfer', { playerId: p.id }, b.clubId);
       continue;
     }
     const repGap = seller.rep - buyer.rep;
     if (repGap > 8 && rng.chance(clamp(repGap / 25, 0, 0.8))) {
-      mail(state, `${fullName(p)} won't come`, `${seller.name} accepted the fee, but ${fullName(p)} doesn't want to step down to ${buyer.name}.`, 'transfer'); continue;
+      mail(state, `${fullName(p)} won't come`, `${seller.name} accepted the fee, but ${fullName(p)} doesn't want to step down to ${buyer.name}.`, 'transfer', {}, b.clubId); continue;
     }
-    if (buyer.cash < b.fee) { mail(state, 'Bid collapsed', `We could not fund the ${money(b.fee)} deal for ${fullName(p)}.`, 'transfer'); continue; }
-    if (buyer.playerIds.length >= LEAGUE.squadMax) { mail(state, 'Squad full', `The deal for ${fullName(p)} fell through because our squad is full (${LEAGUE.squadMax}).`, 'transfer'); continue; }
+    if (buyer.cash < b.fee) { mail(state, 'Bid collapsed', `We could not fund the ${money(b.fee)} deal for ${fullName(p)}.`, 'transfer', {}, b.clubId); continue; }
+    if (buyer.playerIds.length >= LEAGUE.squadMax) { mail(state, 'Squad full', `The deal for ${fullName(p)} fell through because our squad is full (${LEAGUE.squadMax}).`, 'transfer', {}, b.clubId); continue; }
     moveP(state, p, buyer, b.fee);
-    mail(state, `Signed: ${fullName(p)}`, `${fullName(p)} joins from ${seller.name} for ${money(b.fee)} on ${money(p.wage)} a week.`, 'transfer', { playerId: p.id });
+    mail(state, `Signed: ${fullName(p)}`, `${fullName(p)} joins from ${seller.name} for ${money(b.fee)} on ${money(p.wage)} a week.`, 'transfer', { playerId: p.id }, b.clubId);
     news(state, `${buyer.name} sign ${fullName(p)} from ${seller.name} for ${money(b.fee)}.`);
   }
   state.bids = [];
@@ -403,8 +448,8 @@ function aiTransfers(state, rng) {
   }
 }
 
-function incomingOffers(state, rng) {
-  const c = human(state);
+function incomingOffers(state, rng, clubId) {
+  const c = state.clubs[clubId];
   const ps = c.playerIds.map(id => state.players[id]);
   const listed = ps.filter(p => p.listed);
   const chance = 0.3 + listed.length * 0.2;
@@ -416,11 +461,11 @@ function incomingOffers(state, rng) {
   const b = rng.pick(buyers);
   const fee = roundMoney(playerValue(p) * rng.range(p.listed ? 0.75 : 0.9, p.listed ? 1.1 : 1.35));
   state.offers.push({ id: 'o' + state.calendar.day + p.id, playerId: p.id, from: b.id, fee, expires: state.calendar.day + 2, status: 'open' });
-  mail(state, `Offer for ${fullName(p)}`, `${b.name} offer ${money(fee)} for ${fullName(p)}. The offer is open until the end of today.`, 'offer', { playerId: p.id });
+  mail(state, `Offer for ${fullName(p)}`, `${b.name} offer ${money(fee)} for ${fullName(p)}. The offer is open until the end of today.`, 'offer', { playerId: p.id }, c.id);
 }
 
-function youthProspect(state, rng) {
-  const c = human(state);
+function youthProspect(state, rng, clubId) {
+  const c = state.clubs[clubId];
   const lvl = c.facilities.youth;
   const p = makePlayer(state, rng, { pos: rng.pick(['GK', 'DF', 'MF', 'MF', 'FW', 'FW']), mean: 50 + lvl * 4 + c.rep / 10, age: rng.int(16, 18) });
   p.potential = clamp(p.potential + lvl * 3 + rng.int(0, 8), p.skill + 6, 95);
@@ -428,7 +473,7 @@ function youthProspect(state, rng) {
   p.youthOf = c.id; p.youthExpires = state.calendar.day + 3;
   state.players[p.id] = p;
   state.freeAgents.push(p.id);
-  mail(state, `Academy prospect: ${fullName(p)}`, `Your youth coach rates ${fullName(p)} (${p.age}, ${p.pos}) as a real talent: currently ${p.skill}, potential around ${p.potential}. Sign him for free within 3 days or another club will.`, 'youth', { playerId: p.id });
+  mail(state, `Academy prospect: ${fullName(p)}`, `Your youth coach rates ${fullName(p)} (${p.age}, ${p.pos}) as a real talent: currently ${p.skill}, potential around ${p.potential}. Sign him for free within 3 days or another club will.`, 'youth', { playerId: p.id }, c.id);
 }
 
 export function release(state, club, p, silent) {
@@ -453,7 +498,6 @@ export const money = v => {
 // ---------- season end ----------
 function endSeason(state) {
   const rng = rngFor(state, 'season');
-  const userId = state.humans[0];
   const summary = { season: state.season, year: state.year, tables: {} };
   const moves = {};
   state.divisions.forEach((div, di) => {
@@ -479,15 +523,18 @@ function endSeason(state) {
     for (const id of down) state.clubs[id].divisionId = lower.id;
   }
   // user review
-  const uc = state.clubs[userId];
-  const uDiv = Object.keys(summary.tables).find(k => summary.tables[k].some(r => r.id === userId));
-  const uPos = summary.tables[uDiv].find(r => r.id === userId).pos;
-  const target = uc.board.target;
-  const delta = target - uPos;
-  uc.board.confidence = clamp(uc.board.confidence + delta * 6, 5, 100);
-  state.history.push({ season: state.season, year: state.year, div: uDiv, pos: uPos, champion: summary[uDiv + 'champ'], target });
-  const promoted = moves[uDiv]?.up?.includes(userId), relegated = moves[uDiv]?.down?.includes(userId);
-  mail(state, `Season ${state.year}/${String(state.year + 1).slice(2)} review`, `You finished ${ordinal(uPos)} (target: ${ordinal(target)}). ${promoted ? 'Promotion! The club goes up.' : relegated ? 'Relegation. The board is not happy.' : delta >= 0 ? 'The board is pleased.' : 'The board expected more.'} Board confidence: ${Math.round(uc.board.confidence)}%.`, 'board');
+  for (const userId of managed(state)) {
+    const uc = state.clubs[userId];
+    const uDiv = Object.keys(summary.tables).find(k => summary.tables[k].some(r => r.id === userId));
+    const uRow = summary.tables[uDiv].find(r => r.id === userId), uPos = uRow.pos;
+    const target = uc.board.target;
+    const delta = target - uPos;
+    uc.board.confidence = clamp(uc.board.confidence + delta * 6, 5, 100);
+    mgrOf(state, userId).history.push({ season: state.season, year: state.year, div: uDiv, pos: uPos, champion: summary[uDiv + 'champ'], target });
+    if (state.mgrs) mgrOf(state, userId).points = (mgrOf(state, userId).points || 0) + uRow.pts; // league score across seasons
+    const promoted = moves[uDiv]?.up?.includes(userId), relegated = moves[uDiv]?.down?.includes(userId);
+    mail(state, `Season ${state.year}/${String(state.year + 1).slice(2)} review`, `You finished ${ordinal(uPos)} (target: ${ordinal(target)}). ${promoted ? 'Promotion! The club goes up.' : relegated ? 'Relegation. The board is not happy.' : delta >= 0 ? 'The board is pleased.' : 'The board expected more.'} Board confidence: ${Math.round(uc.board.confidence)}%.`, 'board', {}, userId);
+  }
   // players: ageing, development, retirement, contracts
   for (const p of Object.values(state.players)) {
     p.age++;
@@ -505,11 +552,11 @@ function endSeason(state) {
       const p = state.players[pid];
       if (p.age >= 34 && rng.chance((p.age - 33) * 0.35)) {
         c.playerIds = c.playerIds.filter(x => x !== pid); delete state.players[pid];
-        if (c.human) mail(state, `${fullName(p)} retires`, `${fullName(p)} hangs up his boots at ${p.age}.`, 'squad');
+        if (c.human) mail(state, `${fullName(p)} retires`, `${fullName(p)} hangs up his boots at ${p.age}.`, 'squad', {}, c.id);
         continue;
       }
       if (p.contract === 0) {
-        if (c.human) { release(state, c, p, true); mail(state, `${fullName(p)} leaves`, `${fullName(p)}'s contract ran out and he has left the club.`, 'squad'); }
+        if (c.human) { release(state, c, p, true); mail(state, `${fullName(p)} leaves`, `${fullName(p)}'s contract ran out and he has left the club.`, 'squad', {}, c.id); }
         else if (rng.chance(0.8)) { p.contract = rng.int(1, 3); p.wage = wageDemand(p); }
         else release(state, c, p, true);
       }
@@ -537,12 +584,13 @@ function endSeason(state) {
   state.season++; state.year++; state.md = 0;
   newSeasonFixtures(state, rng);
   setBoardTarget(state);
-  mail(state, `New season: ${state.year}/${String(state.year + 1).slice(2)}`, `${state.clubs[userId].name} start the new season in the ${divisionOf(state, userId).name}. ${boardLine(state)}`, 'board');
+  for (const userId of managed(state)) mail(state, `New season: ${state.year}/${String(state.year + 1).slice(2)}`, `${state.clubs[userId].name} start the new season in the ${divisionOf(state, userId).name}. ${boardLine(state, userId)}`, 'board', {}, userId);
 }
 
 // ---------- commands ----------
 export function dispatch(state, cmd) {
   const club = state.clubs[cmd.clubId || state.humans[0]];
+  const today = mgrOf(state, club.id).today;
   const fail = msg => ({ ok: false, msg });
   switch (cmd.type) {
     case 'SET_FORMATION': {
@@ -573,12 +621,12 @@ export function dispatch(state, cmd) {
       return { ok: true };
     }
     case 'TRAIN': {
-      if (state.today.trained) return fail('The squad has already trained today. Come back tomorrow.');
+      if (today.trained) return fail('The squad has already trained today. Come back tomorrow.');
       const rng = rngFor(state, 'train');
       const individual = (cmd.individual || []).slice(0, 3);
       const report = runTraining(state, club, cmd.focus, individual, rng, false);
-      state.today.trained = true; state.today.trainingReport = { focus: cmd.focus, report };
-      completeObjective(state, 'train');
+      today.trained = true; today.trainingReport = { focus: cmd.focus, report };
+      completeObjective(state, 'train', club.id);
       return { ok: true, report };
     }
     case 'BID': {
@@ -590,7 +638,7 @@ export function dispatch(state, cmd) {
       if (club.playerIds.length >= LEAGUE.squadMax) return fail(`Your squad is full (${LEAGUE.squadMax}). Sell or release someone first.`);
       state.bids = state.bids.filter(b => !(b.clubId === club.id && b.playerId === p.id));
       state.bids.push({ clubId: club.id, playerId: p.id, fee: roundMoney(cmd.fee), day: state.calendar.day });
-      completeObjective(state, 'bid');
+      completeObjective(state, 'bid', club.id);
       return { ok: true, msg: `Bid submitted. ${state.clubs[p.clubId].name} will answer overnight.` };
     }
     case 'CANCEL_BID': state.bids = state.bids.filter(b => !(b.clubId === club.id && b.playerId === cmd.playerId)); return { ok: true };
@@ -620,13 +668,13 @@ export function dispatch(state, cmd) {
       return { ok: true, msg: `${fullName(p)} signs a ${p.contract}-year deal on ${money(w)} a week.` };
     }
     case 'SCOUT': {
-      const p = state.players[cmd.playerId]; if (!p || p.scouted) return fail('Already scouted');
+      const p = state.players[cmd.playerId]; if (!p || (state.mgrs ? mgrOf(state, club.id).scouted?.[p.id] : p.scouted)) return fail('Already scouted');
       const max = 2;
-      if (state.today.scoutsUsed >= max) return fail(`Your scouts are all busy today (${max} a day).`);
-      if (state.scouting.some(s => s.playerId === p.id)) return fail('A scout is already on it.');
-      state.scouting.push({ playerId: p.id, readyDay: state.calendar.day + 1 });
-      state.today.scoutsUsed++;
-      completeObjective(state, 'scout');
+      if (today.scoutsUsed >= max) return fail(`Your scouts are all busy today (${max} a day).`);
+      if (state.scouting.some(s => s.playerId === p.id && (!state.mgrs || s.clubId === club.id))) return fail('A scout is already on it.');
+      state.scouting.push(state.mgrs ? { playerId: p.id, readyDay: state.calendar.day + 1, clubId: club.id } : { playerId: p.id, readyDay: state.calendar.day + 1 });
+      today.scoutsUsed++;
+      completeObjective(state, 'scout', club.id);
       return { ok: true, msg: `Scout sent to watch ${fullName(p)}. The report arrives tomorrow.` };
     }
     case 'TICKET_PRICE': club.stadium.ticketPrice = clamp(Math.round(cmd.price), 3, 150); return { ok: true };
@@ -640,7 +688,22 @@ export function dispatch(state, cmd) {
       state.builds.push({ clubId: club.id, kind: o.kind, amount: o.amount || 0, readyDay: state.calendar.day + o.days });
       return { ok: true, msg: `${o.label} started. Ready in ${o.days} day${o.days > 1 ? 's' : ''}.` };
     }
-    case 'WATCHED': state.today.watched = true; completeObjective(state, 'watch'); return { ok: true };
+    case 'WATCHED': today.watched = true; completeObjective(state, 'watch', club.id); return { ok: true };
+    // Multiplayer only (single player edits the lineup and inbox directly in the browser).
+    case 'SET_SLOT': {
+      const i = cmd.i, p = state.players[cmd.playerId];
+      if (!Number.isInteger(i) || i < 0 || i >= club.lineup.length) return fail('Unknown position');
+      if (p?.clubId !== club.id) return fail('Not your player');
+      if (!available(p)) return fail('That player is unavailable.');
+      if (club.lineup.includes(p.id)) return fail('He is already in the team.');
+      club.lineup[i] = p.id; club.bench = club.bench.filter(x => x !== p.id);
+      return { ok: true };
+    }
+    case 'READ_MAIL': {
+      const ids = Array.isArray(cmd.ids) ? new Set(cmd.ids) : null;
+      for (const m of mgrOf(state, club.id).inbox) if (!ids || ids.has(m.id)) m.read = true;
+      return { ok: true };
+    }
     case 'RENAME_CLUB': {
       const c = state.clubs[cmd.targetId]; if (!c) return fail('No club');
       if (cmd.name !== undefined) c.name = String(cmd.name).slice(0, 40) || c.name;
@@ -672,7 +735,7 @@ function signFree(state, club, p) {
   const wasYouth = !!p.youthOf;
   moveP(state, p, club, 0);
   if (wasYouth) { p.wage = roundMoney(800 + club.facilities.youth * 300, 100); delete p.youthOf; }
-  completeObjective(state, 'bid');
+  completeObjective(state, 'bid', club.id);
   return { ok: true, msg: `${fullName(p)} signs on ${money(p.wage)} a week${bonus ? ` with a ${money(bonus)} signing bonus` : ''}.` };
 }
 

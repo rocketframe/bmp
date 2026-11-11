@@ -40,7 +40,8 @@ To produce single-file builds (`dist/index.html` for hosting, `dist/artifact.htm
 | `js/match/audio.js` | Synthesized crowd, whistle and kick sounds (no audio files) |
 | `js/ui/pack.js` | Local-only name packs: overlay, export, sanitized import |
 | `js/ads.js` | Ad slots. Fill in AdSense IDs to replace the placeholders |
-| `js/main.js` | UI screens, match flow, persistence |
+| `js/main.js` | UI screens, match flow, persistence, shared-league client (`#hub=` only) |
+| `js/server/league.js` | Shared league for the game hub: per-manager state, command checks, views |
 
 ## Multiplayer-ready decisions
 - **Pure, serializable state.** The whole career is one JSON object; nothing lives in closures.
@@ -51,6 +52,21 @@ To produce single-file builds (`dist/index.html` for hosting, `dist/artifact.htm
 - **Swappable clock.** `syncClock()` takes the current time; a server can own the calendar instead.
 - **Name packs never touch shared state.** They are a per-browser overlay, so in multiplayer other
   managers always see the default fictional names.
+
+## Shared leagues (multiplayer)
+Opened from the game hub's lobby with `#hub=<hub>&room=<code>&token=...`, the game joins a shared league
+instead of the local career. Without that fragment nothing changes: no network calls, same save.
+- `js/server/league.js` is the league server module. The hub (rocketframe/game-hub) copies `js/core` and
+  `js/server` with `scripts/sync-bmp.sh` and runs every rule on the server, so browsers only send commands.
+- Matchdays are played live: when every manager is ready (or at the deadline) all matches kick off together,
+  managers make half-time changes, the server plays the second half once with both managers' changes, and the
+  results become official at full time (`startMatchday`, `halftime`, `secondHalf`, `advanceDay` in league.js).
+  Browsers never get the second half, or the seed to work it out, before half time.
+- Per-manager parts (today, objectives, inbox, history, streak, scouting) live in `state.mgrs[clubId]`.
+  Single player has no `state.mgrs` and keeps them on the state itself, so old saves load unchanged.
+- The browser only accepts hubs listed in `HUB_ORIGINS` in `js/config.js` (and a localhost hub while the
+  game is served from localhost). It lists the production and staging hubs.
+- Tests: `node --test test/*.test.mjs`.
 
 ## Before a public launch
 - Set `DEV_TOOLS = false` in `js/config.js` (it enables "skip to tomorrow").
