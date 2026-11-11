@@ -37,4 +37,24 @@ export const LEAGUE = {
   squadMin: 16,
 };
 
+// Shared leagues (multiplayer) use a bigger pyramid: four divisions of 16 to 20 clubs. The top two
+// divisions keep the single-player numbers; the two below are smaller in every way. Single player
+// never reads this (a state without leagueSetup uses LEAGUE above).
+//   cap/cash: new club stadium size and bank balance = base + (rep - ref) * perRep + random(0, rand)
+//   priceF: ticket price factor, objBase: daily objective reward base, training: starting facility level
+export const PYRAMID = {
+  clubsMin: 16, clubsMax: 20, clubsDefault: 18, promote: 3,
+  divisions: [
+    LEAGUE.divisions[0],
+    LEAGUE.divisions[1],
+    { id: 'd3', name: 'County League', tv: 14000, prizeTop: 400000, repRange: [41, 53],
+      cap: { base: 2600, ref: 40, perRep: 260, rand: 1500, min: 1800 }, cash: { base: 2.2e5, ref: 40, perRep: 3.5e4, rand: 2.5e5 },
+      priceF: 0.75, objBase: 12000, training: 1 },
+    { id: 'd4', name: 'District League', tv: 4000, prizeTop: 110000, repRange: [32, 42],
+      cap: { base: 900, ref: 30, perRep: 110, rand: 700, min: 600 }, cash: { base: 6e4, ref: 30, perRep: 1.2e4, rand: 8e4 },
+      priceF: 0.55, objBase: 5000, training: 1 },
+  ],
+  repMin: 26,
+};
+
 export const CURRENCY = '€';

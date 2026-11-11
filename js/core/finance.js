@@ -1,6 +1,5 @@
 import { clamp } from './rng.js';
-import { LEAGUE } from './constants.js';
-import { blankLedger } from './world.js';
+import { blankLedger, leagueConf } from './world.js';
 
 export function ledger(club, cat, amount, state, note) {
   club.cash += amount;
@@ -10,14 +9,14 @@ export function ledger(club, cat, amount, state, note) {
     club.fin.log.length = Math.min(club.fin.log.length, 60);
   }
 }
-export const divConf = (state, club) => LEAGUE.divisions.find(d => d.id === club.divisionId);
+export const divConf = (state, club) => leagueConf(state).divisions.find(d => d.id === club.divisionId);
 
 export function sponsorWeekly(club) { return Math.round(0.42 * Math.pow(club.rep, 3) / 1000) * 1000; }
 export function weeklyWages(state, club) { return club.playerIds.reduce((s, id) => s + (state.players[id]?.wage || 0), 0); }
 
 export function expectedAttendance(state, club, opp, tablePos = 6, rng = null) {
   const cap = club.stadium.capacity;
-  const refPrice = 12 + club.rep / 3.2;
+  const refPrice = (12 + club.rep / 3.2) * (divConf(state, club)?.priceF ?? 1); // fans in the lower divisions expect cheaper tickets
   const priceF = clamp(Math.pow(refPrice / Math.max(3, club.stadium.ticketPrice), 1.25), 0.25, 1.4);
   const base = 0.42 + club.rep / 230 + (opp ? (opp.rep - 60) / 400 : 0) + (7 - tablePos) * 0.012 + (club.hype || 0) / 200;
   const noise = rng ? rng.range(0.95, 1.05) : 1;
@@ -47,8 +46,9 @@ export function settleMatchdayFinances(state, fixtureList, tablePosOf, rng) {
 }
 
 export function seasonPrize(state, divId, pos) {
-  const d = LEAGUE.divisions.find(x => x.id === divId);
-  const n = LEAGUE.clubsPerDivision;
+  const LG = leagueConf(state);
+  const d = LG.divisions.find(x => x.id === divId);
+  const n = LG.clubsPerDivision;
   return Math.round(d.prizeTop * Math.pow((n - pos + 1) / n, 1.6) / 10000) * 10000;
 }
 

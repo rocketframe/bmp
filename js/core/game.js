@@ -3,7 +3,7 @@
 // validate and apply the same commands from many managers against one shared world.
 import { makeRng, hashSeed, clamp } from './rng.js';
 import { FORMATIONS, MENTALITIES, TRAINING_FOCUS, LEAGUE } from './constants.js';
-import { createWorld, computeTable, divisionOf, fixtureFor, newSeasonFixtures, seasonLength, fillSquad } from './world.js';
+import { createWorld, computeTable, divisionOf, fixtureFor, newSeasonFixtures, seasonLength, fillSquad, leagueConf, freeAgentRange } from './world.js';
 import { makePlayer, playerValue, wageDemand, autoLineup, repairLineup, assignNumbers, overall, ATTRS, fullName, shortName, effSkill, available, roundMoney } from './players.js';
 import { simulateMatch, resimSecondHalf, makeSheet } from './sim.js';
 import { ledger, settleMatchdayFinances, seasonPrize, resetSeasonLedger, sponsorWeekly, expectedAttendance, divConf } from './finance.js';
@@ -64,7 +64,7 @@ export function setBoardTargetFor(state, id) {
   const div = divisionOf(state, id);
   const ranked = div.clubIds.slice().sort((a, b) => state.clubs[b].rep - state.clubs[a].rep);
   const r = ranked.indexOf(id) + 1;
-  c.board = { target: Math.min(LEAGUE.clubsPerDivision - 2, Math.max(1, r + 1)), confidence: c.board?.confidence ?? 65 };
+  c.board = { target: Math.min(leagueConf(state).clubsPerDivision - 2, Math.max(1, r + 1)), confidence: c.board?.confidence ?? 65 };
 }
 export function boardLine(state, clubId) {
   const c = clubId ? state.clubs[clubId] : human(state); const t = c.board.target;
@@ -99,7 +99,7 @@ export function startDayFor(state, clubId) {
     if (o[0] === 'clean' && picks.includes('score2')) continue;
     picks.push(o[0]);
   }
-  const base = c.divisionId === 'd1' ? 90000 : 30000;
+  const base = divConf(state, c)?.objBase ?? (c.divisionId === 'd1' ? 90000 : 30000);
   mgrOf(state, clubId).today = {
     md: state.md, played: false, trained: false, watched: false, pending: null,
     objectives: picks.map(k => ({ key: k, label: OBJECTIVES[k].label, reward: roundMoney(base * rng.range(0.8, 1.6)), done: false })),
@@ -467,13 +467,15 @@ function incomingOffers(state, rng, clubId) {
 function youthProspect(state, rng, clubId) {
   const c = state.clubs[clubId];
   const lvl = c.facilities.youth;
-  const p = makePlayer(state, rng, { pos: rng.pick(['GK', 'DF', 'MF', 'MF', 'FW', 'FW']), mean: 50 + lvl * 4 + c.rep / 10, age: rng.int(16, 18) });
+  let mean = 50 + lvl * 4 + c.rep / 10;
+  if (state.leagueSetup) mean = Math.min(mean, c.rep + 2 + lvl * 4); // a District League academy finds District League talent
+  const p = makePlayer(state, rng, { pos: rng.pick(['GK', 'DF', 'MF', 'MF', 'FW', 'FW']), mean, age: rng.int(16, 18) });
   p.potential = clamp(p.potential + lvl * 3 + rng.int(0, 8), p.skill + 6, 95);
   p.scouted = true; p.contract = 3; p.wage = roundMoney(800 + lvl * 300, 100);
   p.youthOf = c.id; p.youthExpires = state.calendar.day + 3;
   state.players[p.id] = p;
   state.freeAgents.push(p.id);
-  mail(state, `Academy prospect: ${fullName(p)}`, `Your youth coach rates ${fullName(p)} (${p.age}, ${p.pos}) as a real talent: currently ${p.skill}, potential around ${p.potential}. Sign him for free within 3 days or another club will.`, 'youth', { playerId: p.id }, c.id);
+  mail(state, `Academy prospect: ${fullName(p)}`, `Your youth coach rates ${fullName(p)} (${p.age}, ${p.pos}) as a real talent: currently ${p.skill}, potential around ${p.potential}. Sign him for free within 3 ${state.mgrs ? 'matchdays' : 'days'} or another club will.`, 'youth', { playerId: p.id }, c.id);
 }
 
 export function release(state, club, p, silent) {
@@ -496,8 +498,15 @@ export const money = v => {
 };
 
 // ---------- season end ----------
+// Shared leagues score managers by league points weighted by division: a point in the top division of
+// four counts 4, in the bottom one 1. So climbing the pyramid matters more than winning the bottom one.
+export function divisionWeight(state, divId) {
+  const i = state.divisions.findIndex(d => d.id === divId);
+  return i < 0 ? 1 : state.divisions.length - i;
+}
 function endSeason(state) {
   const rng = rngFor(state, 'season');
+  const LG = leagueConf(state);
   const summary = { season: state.season, year: state.year, tables: {} };
   const moves = {};
   state.divisions.forEach((div, di) => {
@@ -506,12 +515,12 @@ function endSeason(state) {
     table.forEach(r => {
       const c = state.clubs[r.id];
       ledger(c, 'prize', seasonPrize(state, div.id, r.pos), state, `Prize money: ${ordinal(r.pos)} in ${div.name}`);
-      c.rep = clamp(c.rep + (LEAGUE.clubsPerDivision / 2 - r.pos) * 0.35, 40, 92);
+      c.rep = clamp(c.rep + (LG.clubsPerDivision / 2 - r.pos) * 0.35, LG.repMin ?? 40, 92);
     });
     summary[div.id + 'champ'] = table[0].id;
     news(state, `${state.clubs[table[0].id].name} are ${div.name} champions!`);
-    if (di < state.divisions.length - 1) moves[div.id] = { down: table.slice(-LEAGUE.promote).map(r => r.id) };
-    if (di > 0) moves[div.id] = { ...(moves[div.id] || {}), up: table.slice(0, LEAGUE.promote).map(r => r.id) };
+    if (di < state.divisions.length - 1) moves[div.id] = { down: table.slice(-LG.promote).map(r => r.id) };
+    if (di > 0) moves[div.id] = { ...(moves[div.id] || {}), up: table.slice(0, LG.promote).map(r => r.id) };
   });
   // promotion / relegation
   for (let di = 0; di < state.divisions.length - 1; di++) {
@@ -531,7 +540,7 @@ function endSeason(state) {
     const delta = target - uPos;
     uc.board.confidence = clamp(uc.board.confidence + delta * 6, 5, 100);
     mgrOf(state, userId).history.push({ season: state.season, year: state.year, div: uDiv, pos: uPos, champion: summary[uDiv + 'champ'], target });
-    if (state.mgrs) mgrOf(state, userId).points = (mgrOf(state, userId).points || 0) + uRow.pts; // league score across seasons
+    if (state.mgrs) mgrOf(state, userId).points = (mgrOf(state, userId).points || 0) + uRow.pts * divisionWeight(state, uDiv); // manager score across seasons
     const promoted = moves[uDiv]?.up?.includes(userId), relegated = moves[uDiv]?.down?.includes(userId);
     mail(state, `Season ${state.year}/${String(state.year + 1).slice(2)} review`, `You finished ${ordinal(uPos)} (target: ${ordinal(target)}). ${promoted ? 'Promotion! The club goes up.' : relegated ? 'Relegation. The board is not happy.' : delta >= 0 ? 'The board is pleased.' : 'The board expected more.'} Board confidence: ${Math.round(uc.board.confidence)}%.`, 'board', {}, userId);
   }
@@ -577,8 +586,10 @@ function endSeason(state) {
   }
   // clean old free agents
   state.freeAgents = state.freeAgents.filter(id => state.players[id] && state.players[id].age < 35);
-  while (state.freeAgents.length < 30) {
-    const p = makePlayer(state, rng, { pos: rng.pick(['GK', 'DF', 'MF', 'FW']), mean: rng.range(46, 64) });
+  const faWant = state.leagueSetup ? 60 : 30;
+  const [faLo, faHi] = state.leagueSetup ? freeAgentRange(state) : [46, 64];
+  while (state.freeAgents.length < faWant) {
+    const p = makePlayer(state, rng, { pos: rng.pick(['GK', 'DF', 'MF', 'FW']), mean: rng.range(faLo, faHi) });
     p.contract = 0; state.players[p.id] = p; state.freeAgents.push(p.id);
   }
   state.season++; state.year++; state.md = 0;
@@ -621,7 +632,7 @@ export function dispatch(state, cmd) {
       return { ok: true };
     }
     case 'TRAIN': {
-      if (today.trained) return fail('The squad has already trained today. Come back tomorrow.');
+      if (today.trained) return fail(state.mgrs ? 'The squad has already trained. The next session is after the matchday.' : 'The squad has already trained today. Come back tomorrow.');
       const rng = rngFor(state, 'train');
       const individual = (cmd.individual || []).slice(0, 3);
       const report = runTraining(state, club, cmd.focus, individual, rng, false);
@@ -639,7 +650,7 @@ export function dispatch(state, cmd) {
       state.bids = state.bids.filter(b => !(b.clubId === club.id && b.playerId === p.id));
       state.bids.push({ clubId: club.id, playerId: p.id, fee: roundMoney(cmd.fee), day: state.calendar.day });
       completeObjective(state, 'bid', club.id);
-      return { ok: true, msg: `Bid submitted. ${state.clubs[p.clubId].name} will answer overnight.` };
+      return { ok: true, msg: `Bid submitted. ${state.clubs[p.clubId].name} will answer ${state.mgrs ? 'after the matchday' : 'overnight'}.` };
     }
     case 'CANCEL_BID': state.bids = state.bids.filter(b => !(b.clubId === club.id && b.playerId === cmd.playerId)); return { ok: true };
     case 'ACCEPT_OFFER': {
@@ -675,7 +686,7 @@ export function dispatch(state, cmd) {
       state.scouting.push(state.mgrs ? { playerId: p.id, readyDay: state.calendar.day + 1, clubId: club.id } : { playerId: p.id, readyDay: state.calendar.day + 1 });
       today.scoutsUsed++;
       completeObjective(state, 'scout', club.id);
-      return { ok: true, msg: `Scout sent to watch ${fullName(p)}. The report arrives tomorrow.` };
+      return { ok: true, msg: `Scout sent to watch ${fullName(p)}. The report arrives ${state.mgrs ? 'after the matchday' : 'tomorrow'}.` };
     }
     case 'TICKET_PRICE': club.stadium.ticketPrice = clamp(Math.round(cmd.price), 3, 150); return { ok: true };
     case 'BUILD': {
@@ -686,7 +697,7 @@ export function dispatch(state, cmd) {
       if (club.cash < o.cost) return fail('Not enough money.');
       ledger(club, 'building', -o.cost, state, o.label);
       state.builds.push({ clubId: club.id, kind: o.kind, amount: o.amount || 0, readyDay: state.calendar.day + o.days });
-      return { ok: true, msg: `${o.label} started. Ready in ${o.days} day${o.days > 1 ? 's' : ''}.` };
+      return { ok: true, msg: `${o.label} started. Ready in ${o.days} ${state.mgrs ? 'matchday' : 'day'}${o.days > 1 ? 's' : ''}.` };
     }
     case 'WATCHED': today.watched = true; completeObjective(state, 'watch', club.id); return { ok: true };
     // Multiplayer only (single player edits the lineup and inbox directly in the browser).
@@ -742,7 +753,11 @@ function signFree(state, club, p) {
 export function buildOptions(state, club) {
   const busy = k => state.builds.some(b => b.clubId === club.id && b.kind === k);
   const t = club.facilities.training, y = club.facilities.youth;
+  // shared leagues: small grounds in the lower divisions can grow in small steps
+  const small = state.leagueSetup && club.stadium.capacity < 8000
+    ? [{ key: 'stand-xs', kind: 'stadium', label: 'Add 500 terrace places', amount: 500, cost: 250000, days: 2, busy: busy('stadium'), maxed: false }] : [];
   return [
+    ...small,
     { key: 'stand-s', kind: 'stadium', label: 'Add 2,000 seats', amount: 2000, cost: 1800000, days: 3, busy: busy('stadium'), maxed: club.stadium.capacity >= 80000 },
     { key: 'stand-l', kind: 'stadium', label: 'Build a new stand (+6,000)', amount: 6000, cost: 5200000, days: 6, busy: busy('stadium'), maxed: club.stadium.capacity >= 76000 },
     { key: 'train', kind: 'training', label: `Training ground to level ${t + 1}`, cost: 1200000 * t, days: 2 + t, busy: busy('training'), maxed: t >= 5 },
@@ -750,4 +765,4 @@ export function buildOptions(state, club) {
   ];
 }
 
-export { computeTable, divisionOf, fixtureFor, seasonLength, expectedAttendance, sponsorWeekly, fullName, shortName, playerValue, wageDemand, effSkill, available, repairLineup };
+export { computeTable, divisionOf, fixtureFor, seasonLength, expectedAttendance, sponsorWeekly, fullName, shortName, playerValue, wageDemand, effSkill, available, repairLineup, leagueConf };

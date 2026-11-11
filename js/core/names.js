@@ -48,6 +48,8 @@ export const NATIONS = [
 
 // Invented towns. Clubs are built from a town + a suffix.
 export const TOWNS = ['Varnholm','Kessingford','Altmoor','Brennwick','Duskvale','Eastreach','Falkenrode','Greystrand','Hollowmere','Irongate','Juniper Bay','Kronfeld','Lowmarsh','Marrowick','Northwold','Oakhaven','Pellering','Quarryton','Ravensholt','Saltcombe','Thornbury Heath','Uhlenbruck','Vellmar Ost','Wyndham Cross','Ashgrove','Brightwater','Copperfield','Dornbach','Elmstead','Fenwick','Glimmersee','Harrowgate Vale','Ingleby','Jarlsberg','Kittering','Lindenhof'];
+// Extra towns, only used when a world has more clubs than TOWNS (the four-division shared league).
+export const EXTRA_TOWNS = ['Ambermoor','Birkenwald','Coldharbour Rise','Drummerton','Eschenkamp','Foxhollow','Gallowmere','Hesselbrook','Ivyford','Kaltenmoor','Larkspur','Mossbridge','Nettlewick','Osterfelde','Pinehurst Vale','Quellbach','Rookwater','Stillbourne','Tannerby','Ulmenhain','Wexmoor','Yarrowfield','Zinnwalde','Ashcombe Mill','Brackenridge','Castlemoor','Dunfirth','Eldermarsh','Fernhollow','Grünwald Ost','Hartsfold','Inchbury','Kirkmoor','Lantern Bay','Millbrook Down','Nordhavn','Otterstone','Pellbrook','Redwater','Sandling','Thistledown','Upperwick','Valebrook','Westerfold','Wolfsgrund','Ebbingmoor'];
 export const SUFFIXES = ['FC','United','Athletic','SV','Rovers','City','Wanderers','Albion','Sporting','Borussia 07','1899','Town','Real','Olympia','Union','Victoria','Rangers','SC'];
 export const STADIUM_WORDS = ['Park','Arena','Ground','Stadium','Field','Bowl','Road','Lane','Kampfbahn','Stadion'];
 

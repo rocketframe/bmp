@@ -11,26 +11,54 @@ import { autoLineup } from '../core/players.js';
 import { makeRng, hashSeed } from '../core/rng.js';
 import * as G from '../core/game.js';
 import { resimSecondHalfBoth } from '../core/sim.js';
-import { FORMATIONS, MENTALITIES } from '../core/constants.js';
+import { FORMATIONS, MENTALITIES, PYRAMID } from '../core/constants.js';
 
 export const READY = true;
 
 const fail = msg => ({ ok: false, msg });
 
 // ---------- setup ----------
-export function createLeague(seed, managers) {
-  const state = createWorld((Number(seed) >>> 0) || 1, { managerName: 'Manager' });
+// What a lobby can offer when creating a league: the number of clubs per division, and the division each
+// manager starts in (1 = top). The league runs for as many seasons as people keep playing.
+export const OPTIONS = {
+  clubsPerDivision: { min: PYRAMID.clubsMin, max: PYRAMID.clubsMax, default: PYRAMID.clubsDefault },
+  divisions: PYRAMID.divisions.map((d, i) => ({ tier: i + 1, id: d.id, name: d.name })),
+  startDivision: { default: 1 },
+};
+
+// The division a manager asked for: 1..4, or a division id like 'd3'. Anything else gives the fallback.
+function tierOf(state, v, fallback = 0) {
+  const n = state.divisions.length;
+  if (typeof v === 'string' && /^d\d$/.test(v)) v = Number(v.slice(1));
+  v = Math.round(Number(v));
+  return Number.isFinite(v) && v >= 1 && v <= n ? v - 1 : fallback;
+}
+// A division's clubs from the middle of the table outwards, so managers get clubs of similar strength.
+function middleFirst(state, div) {
+  const byRep = div.clubIds.slice().sort((a, b) => state.clubs[b].rep - state.clubs[a].rep);
+  const mid = (byRep.length - 1) / 2;
+  return byRep.map((id, i) => [id, Math.abs(i - mid)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+}
+
+// managers: [{ id, name, startDiv? }]. opts: { clubsPerDivision?: 16..20, startDiv?: 1..4 (default for
+// everyone who did not choose) }. Both are optional: a plain createLeague(seed, managers) gives four
+// divisions of 18 with everyone in the top division.
+export function createLeague(seed, managers, opts = {}) {
+  const o = opts || {};
+  const n = Math.round(Number(o.clubsPerDivision));
+  const clubsPerDivision = Number.isFinite(n) ? Math.max(PYRAMID.clubsMin, Math.min(PYRAMID.clubsMax, n)) : PYRAMID.clubsDefault;
+  const state = createWorld((Number(seed) >>> 0) || 1, { managerName: 'Manager', setup: { clubsPerDivision, tiers: PYRAMID.divisions.length } });
   state.mgrs = {};
   state.mp = { managers: {}, away: {}, startSeason: state.season, lastMatches: {} };
   state.calendar.day = 1;
-  // Everyone starts in the top division on clubs of similar strength: the middle of the table first.
-  const div = state.divisions[0];
-  const byRep = div.clubIds.slice().sort((a, b) => state.clubs[b].rep - state.clubs[a].rep);
-  const mid = (byRep.length - 1) / 2;
-  const order = byRep.map((id, i) => [id, Math.abs(i - mid)]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
+  const fallback = tierOf(state, o.startDiv, 0);
   const rng = makeRng(hashSeed(state.seed, 'clubs'));
-  const picks = rng.shuffle(order.slice(0, Math.min(managers.length, order.length)));
-  managers.slice(0, picks.length).forEach((m, i) => takeClub(state, picks[i], m.id, m.name));
+  state.divisions.forEach((div, t) => {
+    const here = managers.filter(m => tierOf(state, m.startDiv, fallback) === t);
+    const order = middleFirst(state, div);
+    const picks = rng.shuffle(order.slice(0, Math.min(here.length, order.length)));
+    here.slice(0, picks.length).forEach((m, i) => takeClub(state, picks[i], m.id, m.name));
+  });
   return state;
 }
 
@@ -51,23 +79,26 @@ function takeClub(state, clubId, id, name, slot = null) {
   if (!slot || !c.board) G.setBoardTargetFor(state, clubId);
   if (!m.today || m.today.md !== state.md) G.startDayFor(state, clubId);
   if (!slot) {
-    G.mail(state, `Welcome to ${c.name}`, `The board has handed you the keys to ${c.stadium.name}. ${G.boardLine(state, clubId)}\n\nThis is a shared league: every club run by a person is a real rival. Train, set your team and trade, then press Ready. The matchday is played when every manager is ready, or at the deadline. Bids are answered overnight.`, 'board', {}, clubId);
+    G.mail(state, `Welcome to ${c.name}`, `The board has handed you the keys to ${c.stadium.name}. ${G.boardLine(state, clubId)}\n\nThis is a shared league: every club run by a person is a real rival. Train, set your team and trade, then press Ready. The matchday is played when every manager is ready, or at the deadline. Bids, scout reports and building work are settled after each matchday. The league has no last season: climb as far as you can.`, 'board', {}, clubId);
   }
   return clubId;
 }
 
-// Take over a club mid-league (or get your old one back).
-export function joinClub(state, id, name) {
+// Take over a club mid-league (or get your old one back). startDiv (optional, 1..4) picks the division.
+export function joinClub(state, id, name, startDiv) {
   if (state.mp.managers[id]) return { ok: true, clubId: state.mp.managers[id] };
   const away = state.mp.away[id];
   if (away && state.clubs[away.clubId] && !state.clubs[away.clubId].human) {
     delete state.mp.away[id];
     return { ok: true, clubId: takeClub(state, away.clubId, id, name, away.slot) };
   }
-  // An AI club in the division with the most managers, as close as possible to their average strength.
+  // An AI club in the chosen division, or else the division with the most managers, as close as possible
+  // to the managers' average strength there.
   const humanDivs = state.humans.map(h => divisionOf(state, h).id);
-  const divId = state.divisions.map(d => d.id).sort((a, b) => humanDivs.filter(x => x === b).length - humanDivs.filter(x => x === a).length)[0];
-  const reps = state.humans.map(h => state.clubs[h].rep);
+  const chosen = tierOf(state, startDiv, -1);
+  const divId = chosen >= 0 ? state.divisions[chosen].id
+    : state.divisions.map(d => d.id).sort((a, b) => humanDivs.filter(x => x === b).length - humanDivs.filter(x => x === a).length)[0];
+  const reps = state.humans.filter(h => divisionOf(state, h).id === divId).map(h => state.clubs[h].rep);
   const avg = reps.length ? reps.reduce((a, b) => a + b, 0) / reps.length : null;
   const pickFrom = ids => {
     const ai = ids.filter(cid => !state.clubs[cid].human);
@@ -318,15 +349,34 @@ export function advanceDay(state) {
     state.mp.lastMatches[cid] = { md: r.md, season: r.season, div: u.div, idx: u.idx, home: u.home, away: u.away, userSide: u.userSide, result: u.result, changes: lm ? lm.changes : null };
     if (!results.some(x => x.h === u.home && x.a === u.away)) results.push({ h: u.home, a: u.away, s: u.result.score.slice() });
   }
+  tidy(state, state.season !== r.season);
   return { day: state.calendar.day, md: r.md, season: r.season, results, newSeason: state.season !== r.season };
+}
+
+// A league has no last season, so the state must not grow. After each matchday: round player form (it only
+// needs two decimals). After each season: keep the best free agents (prospects first) and forget players
+// nobody can reach any more (released, retired from the list, unsigned prospects).
+export const FREE_AGENTS_MAX = 150;
+function tidy(state, newSeason) {
+  for (const p of Object.values(state.players)) if (typeof p.form === 'number') p.form = Math.round(p.form * 100) / 100;
+  if (!newSeason) return;
+  const P = state.players;
+  const fa = state.freeAgents.filter(id => P[id] && !P[id].clubId);
+  fa.sort((a, b) => (P[b].youthOf ? 1 : 0) - (P[a].youthOf ? 1 : 0) || P[b].value - P[a].value || (a < b ? -1 : 1));
+  state.freeAgents = fa.slice(0, FREE_AGENTS_MAX);
+  const keep = new Set(state.freeAgents);
+  for (const c of Object.values(state.clubs)) for (const id of c.playerIds) keep.add(id);
+  for (const x of [...state.bids, ...state.offers, ...state.scouting]) keep.add(x.playerId);
+  for (const id of Object.keys(P)) if (!keep.has(id)) delete P[id];
 }
 
 // ---------- bookkeeping ----------
 export function managerIds(state) { return Object.values(state.mgrs).map(m => m.managerId); }
 export function seasonsPlayed(state) { return state.season - (state.mp?.startSeason ?? 1); }
 
-// Human managers ranked by division, then league position (this season's table, or the last finished
-// season right after a season ends). points = league points over all seasons played.
+// Human managers ranked by manager points: league points over all seasons, each weighted by the division
+// they were won in (top of four divisions x4 ... bottom x1; see G.divisionWeight). Ties: higher division,
+// then league position (this season's table, or the last finished season right after a season ends).
 export function standings(state) {
   const tables = {};
   const table = divId => (tables[divId] ||= computeTable(state, divId));
@@ -336,8 +386,8 @@ export function standings(state) {
     const last = m.history[m.history.length - 1];
     const useLast = state.md === 0 && last;
     const divIdx = state.divisions.findIndex(d => d.id === (useLast ? last.div : div.id));
-    return { id: m.managerId, divIdx, pos: useLast ? last.pos : row.pos, points: (m.points || 0) + row.pts };
+    return { id: m.managerId, divIdx, pos: useLast ? last.pos : row.pos, points: (m.points || 0) + row.pts * G.divisionWeight(state, div.id) };
   });
-  rows.sort((a, b) => a.divIdx - b.divIdx || a.pos - b.pos);
+  rows.sort((a, b) => b.points - a.points || a.divIdx - b.divIdx || a.pos - b.pos);
   return rows.map((r, i) => ({ id: r.id, place: i + 1, points: r.points }));
 }

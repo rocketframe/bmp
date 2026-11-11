@@ -6,7 +6,7 @@ import * as L from '../js/server/league.js';
 const M = [{ id: 'u1', name: 'Ana' }, { id: 'u2', name: 'Ben' }, { id: 'u3', name: 'Cy' }];
 const roundtrip = s => JSON.parse(JSON.stringify(s)); // the hub stores the state as JSON between calls
 
-test('createLeague gives each manager a club in the top division', () => {
+test('createLeague gives each manager a club in the top division by default', () => {
   const s = L.createLeague(42, M);
   assert.equal(L.READY, true);
   assert.deepEqual(L.managerIds(s).sort(), ['u1', 'u2', 'u3']);
@@ -54,8 +54,8 @@ test('viewFor shows the world plus only that manager\'s private parts', () => {
 });
 
 test('a whole league: matchdays, seasons, joining and leaving', () => {
-  let s = L.createLeague(1234, M.slice(0, 2));
-  const days = 2 * 22 + 3;
+  let s = L.createLeague(1234, M.slice(0, 2), { clubsPerDivision: 16 });
+  const days = 2 * s.fixtures.d1.length + 3;
   let seasons = 0;
   for (let d = 0; d < days; d++) {
     for (const id of L.managerIds(s)) {
@@ -165,4 +165,64 @@ test('half time closes for managers who are away', () => {
   assert.equal(L.halftime(s, 'u2', { mentality: 'attacking' }).ok, false, 'too late');
   L.advanceDay(s);
   assert.equal(s.md, 1);
+});
+
+test('four divisions of 16 to 20 clubs, and each manager can choose where to start', () => {
+  for (const [ask, want] of [[undefined, 18], [16, 16], [20, 20], [12, 16], [99, 20], ['x', 18]]) {
+    const s = L.createLeague(11, M, ask === undefined ? undefined : { clubsPerDivision: ask });
+    assert.equal(s.divisions.length, 4);
+    for (const d of s.divisions) assert.equal(d.clubIds.length, want);
+    assert.equal(s.fixtures.d1.length, 2 * (want - 1), 'double round robin');
+    const names = Object.values(s.clubs).map(c => c.name);
+    assert.equal(new Set(names).size, names.length, 'every club has its own name');
+  }
+  const s = L.createLeague(12, [{ id: 'u1', name: 'Ana', startDiv: 4 }, { id: 'u2', name: 'Ben', startDiv: 'd2' }, { id: 'u3', name: 'Cy' }, { id: 'u4', name: 'Di', startDiv: 9 }], { startDiv: 3 });
+  const div = id => s.clubs[s.mp.managers[id]].divisionId;
+  assert.deepEqual(['u1', 'u2', 'u3', 'u4'].map(div), ['d4', 'd2', 'd3', 'd3'], 'own choice, else the league default');
+  assert.equal(L.OPTIONS.divisions.length, 4);
+  assert.equal(L.OPTIONS.clubsPerDivision.default, 18);
+  // joining later can pick a division too
+  assert.equal(s.clubs[L.joinClub(s, 'u5', 'Ed', 1).clubId].divisionId, 'd1');
+});
+
+test('lower divisions are smaller in every way', () => {
+  const s = L.createLeague(13, M);
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const per = f => s.divisions.map(d => avg(d.clubIds.map(id => f(s.clubs[id]))));
+  for (const f of [c => c.rep, c => c.stadium.capacity, c => c.cash, c => c.stadium.ticketPrice, c => avg(c.playerIds.map(id => s.players[id].skill))]) {
+    const v = per(f);
+    for (let i = 1; i < v.length; i++) assert.ok(v[i] < v[i - 1], `division ${i + 1} below division ${i}: ${v}`);
+  }
+  // a season: three up and three down between neighbouring divisions, less money further down
+  for (let d = 0; d < s.fixtures.d1.length; d++) L.advanceDay(s);
+  assert.equal(s.season, 2);
+  for (const d of s.divisions) assert.equal(d.clubIds.length, 18);
+  const income = per(c => { const f = c.fin.lastSeason; return f.tickets + f.tv + f.sponsor + f.prize; });
+  for (let i = 1; i < income.length; i++) assert.ok(income[i] < income[i - 1], `income falls with the division: ${income}`);
+});
+
+test('standings rank by manager points, so place and score always agree', () => {
+  const s = L.createLeague(14, [{ id: 'u1', name: 'Ana', startDiv: 1 }, { id: 'u2', name: 'Ben', startDiv: 4 }, { id: 'u3', name: 'Cy', startDiv: 2 }], { clubsPerDivision: 16 });
+  for (let d = 0; d < s.fixtures.d1.length + 5; d++) {
+    L.advanceDay(s);
+    const st = L.standings(s);
+    assert.deepEqual(st.map(r => r.place), [1, 2, 3]);
+    for (let i = 1; i < st.length; i++) assert.ok(st[i].points <= st[i - 1].points);
+  }
+});
+
+test('the league does not grow over many seasons', () => {
+  let s = L.createLeague(15, M.slice(0, 2), { clubsPerDivision: 20 });
+  const len = s.fixtures.d1.length, sizes = [];
+  for (let d = 0; d < len * 4; d++) { L.advanceDay(s); if (s.md === 0) { s = roundtrip(s); sizes.push(JSON.stringify(s).length); } }
+  assert.ok(s.freeAgents.length <= L.FREE_AGENTS_MAX);
+  assert.ok(sizes[sizes.length - 1] < sizes[0] * 1.1, `state size stays flat: ${sizes}`);
+  assert.ok(JSON.stringify(L.viewFor(s, 'u1')).length < 1.5e6);
+});
+
+test('the words fit a shared league: things happen after the matchday, not overnight', () => {
+  const s = L.createLeague(16, M);
+  const t = Object.values(s.players).find(p => p.clubId && !s.clubs[p.clubId].human);
+  assert.match(L.apply(s, 'u1', { type: 'BID', playerId: t.id, fee: 1e5 }).msg, /after the matchday/);
+  assert.match(L.apply(s, 'u1', { type: 'SCOUT', playerId: t.id }).msg, /after the matchday/);
 });

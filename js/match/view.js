@@ -177,6 +177,15 @@ export class MatchView {
   pause() { this.paused = true; }
   resume() { this.paused = false; if (this.state === 'halftime') { this.state = 'play'; this.startSecondHalf(); } }
   destroy() { cancelAnimationFrame(this.raf); window.removeEventListener('resize', this._onResize); this.destroyed = true; this.g3?.destroy(); }
+  // Live league matches: catch up to the half-time break (when watching late, so the half-time changes
+  // can still be sent before the break closes).
+  skipToHalf() {
+    if (this.half !== 1 || this.ended || this.state === 'halftime') return;
+    for (; this.evI < this.events.length && this.events[this.evI].half === 1; this.evI++) { const e = this.events[this.evI]; this.countEvent(e); if (e.kind === 'goal') { this.score = e.score.slice(); this.hooks.onScore?.(this.score, e); } }
+    this.t = this.halfEnd[0]; this.script = null; this.replay = null; this.real = null;
+    this.hooks.onClock?.(this.clockLabel());
+    this.endHalf();
+  }
   skipToEnd() {
     // jump to the final state instantly
     for (; this.evI < this.events.length; this.evI++) { const e = this.events[this.evI]; this.countEvent(e); if (e.kind === 'goal') { this.score = e.score.slice(); this.hooks.onScore?.(this.score, e); } }
