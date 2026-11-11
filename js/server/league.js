@@ -1,4 +1,4 @@
-// Matchday Legends league server module. The game hub (rocketframe/game-hub) copies js/core and
+// Bolzplatz Manager Pro league server module. The game hub (rocketframe/game-hub) copies js/core and
 // js/server into its Worker and runs a shared league with it, so every rule is the same code the
 // single-player game uses. Nothing in the browser game imports this file.
 //

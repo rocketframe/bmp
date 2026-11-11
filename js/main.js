@@ -934,7 +934,7 @@ ACTIONS.mpready = () => { if (!app.mp) return; app.mp.room.sendGame({ k: 'ready'
 ACTIONS.mplast = () => { closeModal(); mpShowLastResult(); };
 ACTIONS.mpwatch = () => { const lm = S()?.mp?.lastMatch; if (!lm) return; closeModal(); watchMatch(lm); };
 function mpScreen(title, body, actions = '') {
-  $('#app').innerHTML = `<div class="title"><div class="title-in"><h1>Matchday <b>Legends</b></h1><div class="card" style="display:grid;gap:12px;background:rgba(18,26,35,.92)"><h2>${title}</h2><p class="muted" style="margin:0">${body}</p>${actions ? `<div class="row">${actions}</div>` : ''}</div></div></div>`;
+  $('#app').innerHTML = `<div class="title"><div class="title-in"><h1>Bolzplatz <b>Manager Pro</b></h1><div class="card" style="display:grid;gap:12px;background:rgba(18,26,35,.92)"><h2>${title}</h2><p class="muted" style="margin:0">${body}</p>${actions ? `<div class="row">${actions}</div>` : ''}</div></div></div>`;
 }
 function mpOnGame(m) {
   const mp = app.mp; if (!mp) return;
