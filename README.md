@@ -64,6 +64,15 @@ instead of the local career. Without that fragment nothing changes: no network c
   Browsers never get the second half, or the seed to work it out, before half time.
 - Per-manager parts (today, objectives, inbox, history, streak, scouting) live in `state.mgrs[clubId]`.
   Single player has no `state.mgrs` and keeps them on the state itself, so old saves load unchanged.
+- A shared league is a four-division pyramid (Crown, Shield, County, District) of 16 to 20 clubs each
+  (`state.leagueSetup`, `PYRAMID` in constants.js), with three up and three down. The top two divisions use the
+  single-player numbers; the lower two have weaker players, smaller grounds, cheaper tickets, fewer fans and less
+  TV, prize and objective money. Each manager can pick a starting division (`startDiv` in `createLeague` and
+  `joinClub`; the lobby choices are in `OPTIONS`). Single player has no `leagueSetup` and keeps two divisions of 12.
+- A league has no last season. `advanceDay` keeps the state from growing (best 150 free agents, unreachable
+  players dropped each season). `standings` ranks managers by manager points: league points weighted by division
+  (top of four x4, bottom x1), summed over all seasons.
+- Clubs run by other people show their manager's name in tables, fixtures, the market and match screens.
 - The browser only accepts hubs listed in `HUB_ORIGINS` in `js/config.js` (and a localhost hub while the
   game is served from localhost). It lists the production and staging hubs.
 - Tests: `node --test test/*.test.mjs`.

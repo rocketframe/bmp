@@ -34,6 +34,9 @@ function loadSave() {
 const cv = c => Pk.cview(c);
 const cn = c => esc(Pk.cname(c));
 const cs = c => esc(Pk.cshort(c));
+// Shared league: clubs run by other people carry their manager's name, so you can tell rivals from the computer.
+const hm = c => app.mp && c?.human && c.managerName && c.id !== app.state?.mp?.you ? ` <span class="mgr" title="Run by ${esc(c.managerName)}">👤 ${esc(c.managerName)}</span>` : '';
+const cnm = c => cn(c) + hm(c);
 const pn = p => esc(Pk.pname(p));
 const ps = p => esc(Pk.pshort(p));
 const posTag = p => `<span class="pos pos-${p}">${p}</span>`;
@@ -119,7 +122,7 @@ const VIEWS = {
       ['training', 'Train', t.trained ? 'Session done' : 'Pick today’s focus', t.trained],
       ['squad', 'Set your team', visitedSquad ? 'Team checked' : `${c.formation} · ${MENTALITIES[c.mentality].label}`, visitedSquad || t.played],
       app.mp ? ['play', 'Ready up', mpIsReady() ? 'You are ready' : 'Press Ready when you are done', mpIsReady()] : ['play', 'Play matchday', t.played ? 'Full time' : 'Kick off when ready', t.played],
-      ['transfers', 'Market', s.bids.length ? `${s.bids.length} bid${s.bids.length > 1 ? 's' : ''} pending` : 'Bids resolve overnight', visitedMarket],
+      ['transfers', 'Market', s.bids.length ? `${s.bids.length} bid${s.bids.length > 1 ? 's' : ''} pending` : (app.mp ? 'Bids resolve after the matchday' : 'Bids resolve overnight'), visitedMarket],
     ];
     const nextI = steps.findIndex(x => !x[3]);
     const window5 = (() => { const i = tbl.findIndex(r => r.id === c.id); const a = Math.max(0, Math.min(i - 2, tbl.length - 5)); return tbl.slice(a, a + 5); })();
@@ -132,9 +135,9 @@ const VIEWS = {
     <section class="card hero-match"><div class="bg"></div><div class="hero-in">
       <div class="row"><span class="label">${t.played ? 'Today’s result' : 'Today’s match'} · ${esc(Pk.cstadium(home))}</span><span class="sp"></span>${!t.played ? `<span class="chip">${home.id === c.id ? 'Home' : 'Away'}</span>` : ''}</div>
       <div class="versus">
-        <div class="side">${crest(cv(home), 64)}<div><div class="nm">${cn(home)}</div><div class="sub">${formChips(tbl, home.id)}</div></div></div>
+        <div class="side">${crest(cv(home), 64)}<div><div class="nm">${cnm(home)}</div><div class="sub">${formChips(tbl, home.id)}</div></div></div>
         <div class="vs">${rep ? `<div class="score">${rep.score[0]}–${rep.score[1]}</div>` : 'VS'}</div>
-        <div class="side r">${crest(cv(away), 64)}<div><div class="nm">${cn(away)}</div><div class="sub">${formChips(tbl, away.id)}</div></div></div>
+        <div class="side r">${crest(cv(away), 64)}<div><div class="nm">${cnm(away)}</div><div class="sub">${formChips(tbl, away.id)}</div></div></div>
       </div>
       <div class="steps">${steps.map(([k, l, sub, done], i) => `<a class="step ${done ? 'done' : ''} ${i === nextI ? 'next' : ''}" href="${k === 'play' ? '#today' : '#' + k}" ${k === 'play' && !t.played ? `data-act="${app.mp ? 'mpready' : 'preview'}"` : ''}><span class="label">${done ? '✓' : i + 1}. ${l}</span><b>${esc(sub)}</b></a>`).join('')}</div>
       <div class="row">${app.mp ? mpHeroRow() : t.played
@@ -156,7 +159,7 @@ const VIEWS = {
       </section>
       <section class="card"><div class="card-h"><h3>League</h3><a href="#league" class="label">Full table</a></div>
         <table><thead><tr><th>#</th><th>Club</th><th class="n">P</th><th class="n">GD</th><th class="n">Pts</th></tr></thead><tbody>
-        ${window5.map(r => `<tr class="${r.id === c.id ? 'me' : ''}"><td class="n">${r.pos}</td><td><span class="pl">${crest(cv(CL(r.id)), 20)}${cn(CL(r.id))}</span></td><td class="n">${r.p}</td><td class="n">${r.gf - r.ga}</td><td class="n"><b>${r.pts}</b></td></tr>`).join('')}
+        ${window5.map(r => `<tr class="${r.id === c.id ? 'me' : ''}"><td class="n">${r.pos}</td><td><span class="pl">${crest(cv(CL(r.id)), 20)}${cnm(CL(r.id))}</span></td><td class="n">${r.p}</td><td class="n">${r.gf - r.ga}</td><td class="n"><b>${r.pts}</b></td></tr>`).join('')}
         </tbody></table>
       </section>
     </div>
@@ -205,7 +208,7 @@ const VIEWS = {
       return `<div class="page-h"><div><div class="kicker">${TRAINING_FOCUS[r.focus]?.label || 'Session'} · done</div><h2>Training report</h2></div></div>
       <section class="card"><div class="card-h"><h3>Who improved today</h3><span class="label">Training ground level ${c.facilities.training}</span></div>
         ${r.report.length ? `<table><thead><tr><th>Player</th><th>Improved</th><th class="n">Skill</th></tr></thead><tbody>${r.report.map(x => { const p = P(x.id); return p ? `<tr><td><span class="pl">${posTag(p.pos)} <b>${pn(p)}</b></span></td><td>${x.gained.map(a => `<span class="chip ok">+1 ${a}</span>`).join(' ')}</td><td class="n"><span class="skill ${skillClass(p.skill)}">${p.skill}</span>${x.up ? ` <span style="color:var(--pitch)">▲${x.up}</span>` : ''}</td></tr>` : ''; }).join('')}</tbody></table>` : '<p class="muted">Nobody made a visible step today. Young players with high potential improve fastest.</p>'}
-        <p class="muted" style="font-size:14px">The squad can train once a day. Come back tomorrow for the next session.</p>
+        <p class="muted" style="font-size:14px">${app.mp ? 'The squad can train once per matchday. The next session opens after the matchday.' : 'The squad can train once a day. Come back tomorrow for the next session.'}</p>
       </section>`;
     }
     const pool = c.playerIds.map(P).filter(p => p.injury <= 0).sort((a, b) => G.trainingGainChance(b, c.facilities.training) - G.trainingGainChance(a, c.facilities.training));
@@ -242,10 +245,10 @@ const VIEWS = {
         <input id="fq" type="text" placeholder="Search name or club" value="${esc(f.q)}" data-chg="fq">
       </div>
       <div class="tbl-wrap"><table><thead><tr><th>Pos</th><th>Name</th><th class="n">Age</th><th>Club</th><th class="n">Skill</th><th class="n">Pot</th><th class="n">Value</th><th class="n">Wage</th><th></th></tr></thead><tbody>
-      ${shown.map(p => { const cl = p.clubId ? CL(p.clubId) : null; const bid = s.bids.find(b => b.playerId === p.id); return `<tr class="click" data-act="prow" data-id="${p.id}"><td>${posTag(p.pos)}</td><td><b>${pn(p)}</b>${p.youthOf ? ' <span class="chip ok">Academy</span>' : ''}</td><td class="n">${p.age}</td><td>${cl ? `<span class="pl">${crest(cv(cl), 18)}${cs(cl)}</span>` : '<span class="muted">Free</span>'}</td><td class="n"><span class="skill ${skillClass(p.skill)}">${p.skill}</span></td><td class="n">${potLabel(p)}</td><td class="n">${money(p.value)}</td><td class="n">${money(p.wage)}</td><td>${bid ? `<span class="chip warn">Bid ${money(bid.fee)}</span>` : p.listed ? '<span class="chip">Listed</span>' : ''}</td></tr>`; }).join('')}
+      ${shown.map(p => { const cl = p.clubId ? CL(p.clubId) : null; const bid = s.bids.find(b => b.playerId === p.id); return `<tr class="click" data-act="prow" data-id="${p.id}"><td>${posTag(p.pos)}</td><td><b>${pn(p)}</b>${p.youthOf ? ' <span class="chip ok">Academy</span>' : ''}</td><td class="n">${p.age}</td><td>${cl ? `<span class="pl">${crest(cv(cl), 18)}${cs(cl)}${hm(cl)}</span>` : '<span class="muted">Free</span>'}</td><td class="n"><span class="skill ${skillClass(p.skill)}">${p.skill}</span></td><td class="n">${potLabel(p)}</td><td class="n">${money(p.value)}</td><td class="n">${money(p.wage)}</td><td>${bid ? `<span class="chip warn">Bid ${money(bid.fee)}</span>` : p.listed ? '<span class="chip">Listed</span>' : ''}</td></tr>`; }).join('')}
       </tbody></table></div>${list.length > 80 ? `<p class="muted">Showing 80 of ${list.length}. Narrow the filters to see more.</p>` : ''}`;
     } else if (tab === 'bids') {
-      body = s.bids.length ? `<table><thead><tr><th>Player</th><th>Club</th><th class="n">Your bid</th><th class="n">Value</th><th></th></tr></thead><tbody>${s.bids.map(b => { const p = P(b.playerId); return `<tr><td><b>${pn(p)}</b></td><td>${cn(CL(p.clubId))}</td><td class="n">${money(b.fee)}</td><td class="n">${money(p.value)}</td><td><button class="btn small" data-act="cancelbid" data-id="${p.id}">Withdraw</button></td></tr>`; }).join('')}</tbody></table><p class="muted">Clubs answer overnight. You'll find their replies in your inbox tomorrow.</p>` : '<p class="muted">No open bids. Find a player in the market and make an offer. Clubs reply overnight.</p>';
+      body = s.bids.length ? `<table><thead><tr><th>Player</th><th>Club</th><th class="n">Your bid</th><th class="n">Value</th><th></th></tr></thead><tbody>${s.bids.map(b => { const p = P(b.playerId); return `<tr><td><b>${pn(p)}</b></td><td>${cnm(CL(p.clubId))}</td><td class="n">${money(b.fee)}</td><td class="n">${money(p.value)}</td><td><button class="btn small" data-act="cancelbid" data-id="${p.id}">Withdraw</button></td></tr>`; }).join('')}</tbody></table><p class="muted">${app.mp ? 'Clubs answer after the matchday. Their replies arrive in your inbox.' : 'Clubs answer overnight. You\'ll find their replies in your inbox tomorrow.'}</p>` : `<p class="muted">No open bids. Find a player in the market and make an offer. Clubs reply ${app.mp ? 'after the matchday' : 'overnight'}.</p>`;
     } else if (tab === 'offers') {
       const open = s.offers.filter(o => o.status === 'open');
       body = open.length ? `<table><thead><tr><th>Player</th><th>From</th><th class="n">Offer</th><th class="n">Value</th><th class="n">Expires</th><th></th></tr></thead><tbody>${open.map(o => { const p = P(o.playerId); return `<tr><td><b>${pn(p)}</b> ${posTag(p.pos)}</td><td><span class="pl">${crest(cv(CL(o.from)), 18)}${cn(CL(o.from))}</span></td><td class="n"><b>${money(o.fee)}</b></td><td class="n">${money(p.value)}</td><td class="n">${o.expires - s.calendar.day <= 1 ? 'Tonight' : 'Tomorrow night'}</td><td class="row"><button class="btn small primary" data-act="accept" data-id="${o.id}">Accept</button><button class="btn small" data-act="reject" data-id="${o.id}">Reject</button></td></tr>`; }).join('')}</tbody></table>` : '<p class="muted">No offers right now. List players to attract bids. New offers arrive overnight.</p>';
@@ -263,6 +266,7 @@ const VIEWS = {
     const div = s.divisions.find(d => d.id === divId);
     const tbl = G.computeTable(s, divId);
     const n = tbl.length;
+    const promo = G.leagueConf(s).promote, isFirst = divId === s.divisions[0].id, isLast = divId === s.divisions[s.divisions.length - 1].id;
     const mdMax = G.seasonLength(s);
     const md = app.ui.mdView ?? Math.max(0, Math.min(s.md - (s.today.played ? 1 : 0), mdMax - 1));
     const round = s.fixtures[divId][md] || [];
@@ -270,11 +274,11 @@ const VIEWS = {
     return `<div class="page-h"><div><div class="kicker">Season ${seasonLabel()}</div><h2>${esc(Pk.dname(div))}</h2></div>
       <div class="seg">${s.divisions.map(d => `<button class="${d.id === divId ? 'on' : ''}" data-act="div" data-v="${d.id}">${esc(Pk.dname(d))}</button>`).join('')}</div></div>
     <section class="card"><div class="tbl-wrap"><table><thead><tr><th class="n">#</th><th>Club</th><th class="n">P</th><th class="n">W</th><th class="n">D</th><th class="n">L</th><th class="n">GF</th><th class="n">GA</th><th class="n">GD</th><th class="n">Pts</th><th>Form</th></tr></thead><tbody>
-      ${tbl.map(r => { const cl = CL(r.id); const z = divId === s.divisions[0].id ? (r.pos > n - LEAGUE.promote ? 'zone-down' : '') : (r.pos <= LEAGUE.promote ? 'zone-up' : ''); return `<tr class="${r.id === c.id ? 'me' : ''} ${z}"><td class="n">${r.pos}</td><td><span class="pl">${crest(cv(cl), 22)}<span class="nm">${cn(cl)}</span></span></td><td class="n">${r.p}</td><td class="n">${r.w}</td><td class="n">${r.d}</td><td class="n">${r.l}</td><td class="n">${r.gf}</td><td class="n">${r.ga}</td><td class="n">${r.gf - r.ga}</td><td class="n"><b>${r.pts}</b></td><td>${r.form.map(x => `<span class="form-${x}">${x}</span>`).join('')}</td></tr>`; }).join('')}
-    </tbody></table></div><p class="label" style="margin:10px 0 0">${divId === s.divisions[0].id ? `Bottom ${LEAGUE.promote} are relegated` : `Top ${LEAGUE.promote} are promoted`}</p></section>
+      ${tbl.map(r => { const cl = CL(r.id); const z = !isFirst && r.pos <= promo ? 'zone-up' : !isLast && r.pos > n - promo ? 'zone-down' : ''; return `<tr class="${r.id === c.id ? 'me' : ''} ${z}"><td class="n">${r.pos}</td><td><span class="pl">${crest(cv(cl), 22)}<span class="nm">${cnm(cl)}</span></span></td><td class="n">${r.p}</td><td class="n">${r.w}</td><td class="n">${r.d}</td><td class="n">${r.l}</td><td class="n">${r.gf}</td><td class="n">${r.ga}</td><td class="n">${r.gf - r.ga}</td><td class="n"><b>${r.pts}</b></td><td>${r.form.map(x => `<span class="form-${x}">${x}</span>`).join('')}</td></tr>`; }).join('')}
+    </tbody></table></div><p class="label" style="margin:10px 0 0">${[isFirst ? '' : `Top ${promo} are promoted`, isLast ? '' : `Bottom ${promo} are relegated`].filter(Boolean).join(' · ')}</p></section>
     <div class="grid2">
       <section class="card"><div class="card-h"><h3>Matchday ${md + 1}</h3><div class="row"><button class="btn small" data-act="md" data-v="${md - 1}" ${md <= 0 ? 'disabled' : ''}>◀</button><button class="btn small" data-act="md" data-v="${md + 1}" ${md >= mdMax - 1 ? 'disabled' : ''}>▶</button></div></div>
-        <table><tbody>${round.map(f => `<tr class="${f.h === c.id || f.a === c.id ? 'me' : ''}"><td style="text-align:right">${cn(CL(f.h))}</td><td class="n" style="text-align:center;width:64px"><b>${f.r ? `${f.r.s[0]} – ${f.r.s[1]}` : 'v'}</b></td><td>${cn(CL(f.a))}</td></tr>`).join('')}</tbody></table>
+        <table><tbody>${round.map(f => `<tr class="${f.h === c.id || f.a === c.id ? 'me' : ''}"><td style="text-align:right">${cnm(CL(f.h))}</td><td class="n" style="text-align:center;width:64px"><b>${f.r ? `${f.r.s[0]} – ${f.r.s[1]}` : 'v'}</b></td><td>${cnm(CL(f.a))}</td></tr>`).join('')}</tbody></table>
       </section>
       <section class="card"><div class="card-h"><h3>Top scorers</h3></div>
         ${scorers.length ? `<table><tbody>${scorers.map(p => `<tr><td><b>${pn(p)}</b></td><td>${cs(CL(p.clubId))}</td><td class="n"><b>${p.stats.goals}</b></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No goals yet this season.</p>'}
@@ -442,7 +446,7 @@ function playerModal(id) {
   else if (!p.clubId) actions = `<button class="btn primary" data-act="sign" data-id="${p.id}">Sign now (${money(p.wage)}/wk${p.youthOf ? '' : ' + bonus ' + money(G.wageDemand(p) * 4)})</button>${!known && !scouting ? `<button class="btn" data-act="scout" data-id="${p.id}">Send scout</button>` : ''}`;
   else actions = `<div class="row" style="width:100%"><label class="label" for="bidfee">Your bid (€)</label><input id="bidfee" type="number" step="10000" min="0" value="${bid ? bid.fee : suggest}" style="width:150px"><button class="btn primary" data-act="bid" data-id="${p.id}">${bid ? 'Update bid' : 'Place bid'}</button>${!known && !scouting ? `<button class="btn" data-act="scout" data-id="${p.id}">Send scout</button>` : ''}${scouting ? '<span class="chip warn">Scout report tomorrow</span>' : ''}</div><p class="muted" style="margin:0;font-size:13px">Market value ${money(p.value)}. Clubs want more for key players and less for listed ones. The answer comes overnight.</p>`;
   openModal(`
-    <div class="row">${cl ? crest(cv(cl), 44) : ''}<div><div class="kicker">${POS_LABEL[p.pos]} · ${p.nat} · age ${p.age}</div><h2 style="font-size:30px">${pn(p)}</h2><div class="muted">${cl ? cn(cl) : (p.youthOf ? 'Your academy prospect' : 'Free agent')}${p.number && cl ? ' · #' + p.number : ''}</div></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
+    <div class="row">${cl ? crest(cv(cl), 44) : ''}<div><div class="kicker">${POS_LABEL[p.pos]} · ${p.nat} · age ${p.age}</div><h2 style="font-size:30px">${pn(p)}</h2><div class="muted">${cl ? cnm(cl) : (p.youthOf ? 'Your academy prospect' : 'Free agent')}${p.number && cl ? ' · #' + p.number : ''}</div></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
     <div class="grid3"><div><div class="label">Skill</div><div class="big-money ${skillClass(p.skill)}">${p.skill}</div></div><div><div class="label">Potential</div><div class="big-money">${known ? p.potential : '?'}</div></div><div><div class="label">Value</div><div class="big-money" style="font-size:30px">${money(p.value)}</div></div></div>
     <div style="display:grid;gap:6px">${attrs.map(a => `<div class="attr"><span class="label">${a}</span>${bar(p.attrs[a], 100, p.attrs[a] < 50 ? 'red' : p.attrs[a] < 70 ? 'amber' : '')}<b class="num">${p.attrs[a]}</b></div>`).join('')}</div>
     <dl class="kv"><dt>Wage</dt><dd>${money(p.wage)} / week</dd><dt>Contract</dt><dd>${p.contract} year${p.contract === 1 ? '' : 's'}</dd><dt>Form · fitness · morale</dt><dd>${p.form.toFixed(1)} · ${Math.round(p.fitness)}% · ${Math.round(p.morale)}%</dd><dt>This season</dt><dd>${p.stats.apps} apps · ${p.stats.goals} goals · ${p.stats.assists} assists · avg ${avg}</dd></dl>
@@ -591,7 +595,7 @@ function matchPreview() {
   const xi = cl => { const sh = pending ? (cl.id === pending.user.home ? pending.user.result.sheets[0] : pending.user.result.sheets[1]) : makeSheet(s, cl); return sh.xi.map(p => `<div class="row" style="gap:6px">${posTag(p.role)}<span>${esc(Pk.pshort(P(p.id)) || p.name)}</span><span class="sp"></span><span class="skill ${skillClass(p.skill)}">${p.skill}</span></div>`).join(''); };
   if (!pending) { G.repairLineup?.(s, c); }
   openModal(`<div class="row"><div><div class="kicker">Matchday ${s.md + 1} · ${esc(Pk.cstadium(H))}</div><h2>Match preview</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
-    <div class="versus"><div class="side">${crest(cv(H), 52)}<div class="nm" style="font-size:22px">${cn(H)}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(A), 52)}<div class="nm" style="font-size:22px">${cn(A)}</div></div></div>
+    <div class="versus"><div class="side">${crest(cv(H), 52)}<div class="nm" style="font-size:22px">${cnm(H)}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(A), 52)}<div class="nm" style="font-size:22px">${cnm(A)}</div></div></div>
     <div class="grid2"><div style="display:grid;gap:4px"><div class="label">${H.formation}</div>${xi(H)}</div><div style="display:grid;gap:4px"><div class="label">${A.formation}</div>${xi(A)}</div></div>
     ${pending ? '<div class="notice">This match is already under way. You can watch it again from the start.</div>' : ''}
     <div class="row"><button class="btn primary" data-act="watch">▶ Watch live</button><button class="btn" data-act="quick">Quick result</button>${!pending ? '<a class="btn ghost" href="#squad" data-act="close">Change team first</a>' : ''}</div>`);
@@ -627,7 +631,7 @@ function showResults(u, opt = {}) {
   const goals = r.events.filter(e => e.kind === 'goal');
   const objs = opt.objectives ?? s.today.objectives;
   openModal(`<div class="row"><div><div class="kicker">Full time · matchday ${md + 1}</div><h2>${r.score[myIdx] > r.score[1 - myIdx] ? 'Victory!' : r.score[myIdx] < r.score[1 - myIdx] ? 'Defeat' : 'A draw'}</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
-    <div class="versus"><div class="side">${crest(cv(H), 48)}<div class="nm" style="font-size:20px">${cn(H)}</div></div><div class="vs"><div class="score" style="font-size:46px">${r.score[0]}–${r.score[1]}</div></div><div class="side r">${crest(cv(A), 48)}<div class="nm" style="font-size:20px">${cn(A)}</div></div></div>
+    <div class="versus"><div class="side">${crest(cv(H), 48)}<div class="nm" style="font-size:20px">${cnm(H)}</div></div><div class="vs"><div class="score" style="font-size:46px">${r.score[0]}–${r.score[1]}</div></div><div class="side r">${crest(cv(A), 48)}<div class="nm" style="font-size:20px">${cnm(A)}</div></div></div>
     ${goals.length ? `<div style="font-size:14px">${goals.map(g => `⚽ ${Math.round(g.t)}' ${esc(Pk.pshort(P(g.pid)) || '')} <span class="muted">(${g.team === 0 ? cs(H) : cs(A)}${g.penalty ? ', pen' : ''})</span>`).join(' · ')}</div>` : ''}
     <div class="grid2">
       <div><div class="label">Your player ratings</div><table><tbody>${myIds.filter(id => P(id)).map(id => `<tr><td>${esc(Pk.pshort(P(id)))}${id === r.motm ? ' <span class="chip ok">Man of the match</span>' : ''}</td><td class="n"><b>${(r.ratings[id] ?? 6).toFixed(1)}</b></td></tr>`).join('')}</tbody></table></div>
@@ -659,7 +663,7 @@ function watchMatch(replay = null, live = false) {
         <div class="seg" id="m-cam">${[['broadcast', 'TV'], ['tactical', 'Tactical']].map(([v, l]) => `<button data-cam="${v}" class="${app.prefs.camera === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         <button class="btn small" id="m-snd" title="Stadium sound">${app.prefs.sound ? '🔊' : '🔇'}</button>
         ${app.voice.ok ? `<button class="btn small" id="m-voice" title="Commentary voice">${app.prefs.voice !== false ? '🎙️' : '🎙️✕'}</button>` : ''}
-        ${live ? '' : '<button class="btn small" id="m-skip">Skip to full time</button>'}
+        ${live ? '<button class="btn small" id="m-tohalf" title="Catch up so you can make your half-time changes in time">Jump to half time</button>' : '<button class="btn small" id="m-skip">Skip to full time</button>'}
       </div>
     </div>
     <aside class="feed"><div class="feed-h"><div class="label">${esc(Pk.cstadium(H))}</div><b>${esc(home.name)} v ${esc(away.name)}</b></div>
@@ -697,7 +701,7 @@ function watchMatch(replay = null, live = false) {
       onReplay: on => { if (on) pop.innerHTML = ''; },
       onCard: (e, name) => { pop.innerHTML = `<div class="card-pop"><i style="background:${e.kind === 'yellow' ? '#ffd400' : '#e01b24'}"></i>${esc(name)}</div>`; setTimeout(() => { pop.innerHTML = ''; }, 2400); },
       onSub: (e, outN, inN) => { pop.innerHTML = `<div class="card-pop" style="font-size:15px"><span style="color:var(--pitch)">▲ ${esc(inN)}</span><span style="color:var(--red)">▼ ${esc(outN)}</span></div>`; setTimeout(() => { pop.innerHTML = ''; }, 2400); },
-      onHalfTime: st => { setTimeout(() => vo.stop(), 2500); watchedHalf = true; if (live) mpLiveHalftime(el, view, u, side, st); else if (replay) setTimeout(() => view.resume(), 2500); else halftime(el, view, u, side, st); },
+      onHalfTime: st => { $('#m-tohalf', el)?.remove(); setTimeout(() => vo.stop(), 2500); watchedHalf = true; if (live) mpLiveHalftime(el, view, u, side, st); else if (replay) setTimeout(() => view.resume(), 2500); else halftime(el, view, u, side, st); },
       onFullTime: st => { showStats(st); fulltime(el, view, watchedHalf && !skipped, replay || (live ? { ...u, result: view.result } : null)); },
     },
   });
@@ -708,7 +712,18 @@ function watchMatch(replay = null, live = false) {
   $('#m-snd', el).addEventListener('click', e => { app.prefs.sound = !app.prefs.sound; savePrefs(); if (app.prefs.sound) app.audio.enable(); else app.audio.disable(); e.currentTarget.textContent = app.prefs.sound ? '🔊' : '🔇'; });
   $('#m-skip', el)?.addEventListener('click', () => { vo.stop(); skipped = !watchedHalf; $$('.overlay', el).forEach(x => x.remove()); view.skipToEnd(); });
   app.matchView = view;
-  if (live) app.mp.liveView = { el, view, u, side, atHalf: false, applied: false };
+  if (live) {
+    app.mp.liveView = { el, view, u, side, atHalf: false, applied: false };
+    // Watching late: catch up to half time by yourself, or automatically when the break is about to close,
+    // so the half-time changes are never lost.
+    const toHalf = () => { vo.stop(); $('#m-tohalf', el)?.remove(); view.skipToHalf(); };
+    $('#m-tohalf', el)?.addEventListener('click', toHalf);
+    const catchUp = setInterval(() => {
+      if (view.destroyed || view.half !== 1 || view.state === 'halftime') return clearInterval(catchUp);
+      const L = S()?.mp?.live;
+      if (L?.phase === 'first' && L.htCloseAt - app.mp.room.serverNow() < MP_HT_CATCHUP_MS) { clearInterval(catchUp); toast('The half-time break is closing soon, so we skipped to half time.'); toHalf(); }
+    }, 1000);
+  }
 }
 
 function halftime(el, view, u, side, st, live = false) {
@@ -823,6 +838,7 @@ ACTIONS.start = () => {
 // ---------- shared league (only when opened from the game hub with #hub=...) ----------
 // The league server owns the state and runs every rule; this page sends commands and shows what it gets back.
 const mpMe = () => app.mp?.hub.user?.id;
+const MP_HT_CATCHUP_MS = 45e3; // a late viewer jumps to half time when the break closes in less than this
 function mpIsReady() { return !!app.mp && app.mp.ready.includes(mpMe()); }
 function mpLobbyUrl() { return app.mp.hub.origin + '/?room=' + encodeURIComponent(app.mp.room.code); }
 // Keep the launch fragment in the address bar while moving between screens, so a reload rejoins the league.
@@ -871,7 +887,7 @@ function mpLiveCheck() {
   if ($('#ko-modal')) return;
   closeModal();
   openModal(`<div id="ko-modal" style="display:grid;gap:14px"><div class="kicker">Matchday ${lm.md + 1} · live</div>
-    <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
+    <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cnm(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cnm(CL(lm.away))}</div></div></div>
     ${lm.opponentManager ? `<div class="notice">You are up against <b>${esc(lm.opponentManager)}</b>. You can both change tactics at half time.</div>` : ''}
     <div class="row"><div><div class="label">Kick-off in</div><div class="countdown" id="ko-cd">--</div></div><span class="sp"></span><button class="btn primary" data-act="mplive">▶ Watch now</button><button class="btn ghost" data-act="mpnolive">Not now</button></div></div>`);
   clearInterval(mp.koTimer);
@@ -968,7 +984,7 @@ function mpOnGame(m) {
     // never show the score before the manager has had the chance to watch
     closeModal();
     openModal(`<div class="row"><div><div class="kicker">Matchday ${lm.md + 1} has been played</div><h2>Your match is ready</h2></div><span class="sp"></span><button class="btn ghost" data-act="close" aria-label="Close">✕</button></div>
-      <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cn(CL(lm.away))}</div></div></div>
+      <div class="versus"><div class="side">${crest(cv(CL(lm.home)), 48)}<div class="nm" style="font-size:20px">${cnm(CL(lm.home))}</div></div><div class="vs">VS</div><div class="side r">${crest(cv(CL(lm.away)), 48)}<div class="nm" style="font-size:20px">${cnm(CL(lm.away))}</div></div></div>
       ${m.digest?.newSeason ? '<div class="notice">The season is over. Your season review is in the inbox.</div>' : ''}
       <div class="row"><button class="btn primary" data-act="mpwatch">▶ Watch the match</button><button class="btn" data-act="mplast">Just show me the result</button><button class="btn ghost" data-act="close">Later</button></div>`);
   } else if (m.k === 'joined' || m.k === 'left') {

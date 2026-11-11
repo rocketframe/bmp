@@ -259,3 +259,5 @@ input[type=range] { accent-color: var(--amber); width: 100%; }
 .subs-list select { flex: 1; min-width: 0; }
 .side .nm { overflow-wrap: normal; word-break: normal; hyphens: auto; }
 @media (max-width: 860px) { .side .nm { font-size: 17px; } .side { gap: 8px; } .slot { width: 60px; } .slot .nm { max-width: 60px; font-size: 11px; } }
+/* shared league: a club run by another person */
+.mgr { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px; border-radius: 99px; font: 600 11px var(--cond); letter-spacing: .04em; color: #ffd88a; background: #2a2009; border: 1px solid #6b4f12; white-space: nowrap; vertical-align: middle; text-transform: none; }
