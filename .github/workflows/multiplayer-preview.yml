@@ -1,6 +1,6 @@
 # Puts every pull request on the multiplayer preview, so it can be tried from the staging game hub
 # (https://game-hub-staging.rocketframe.workers.dev) without anyone running wrangler by hand.
-# Preview: https://multiplayer.bmp-preview.pages.dev  ·  The live game (GitHub Pages from main) is not touched.
+# Preview: https://multiplayer.bmp-preview.pages.dev  ·  The live site (live-site.yml, from main) is not touched.
 # Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
 name: Multiplayer preview
 
