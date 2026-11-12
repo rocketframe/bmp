@@ -85,7 +85,8 @@ function render() {
       <div class="top-stats">
         <div class="stat hide-m"><span class="label">Day</span><span class="v">${s.calendar.day} · MD ${Math.min(s.md + 1, G.seasonLength(s))}/${G.seasonLength(s)}</span></div>
         <div class="stat"><span class="label">Cash</span><span class="v" style="color:${c.cash < 0 ? 'var(--red)' : 'inherit'}">${money(c.cash)}</span></div>
-        <div class="stat streak" title="Days in a row you've managed the club"><span class="label">Streak</span><span class="v">${s.calendar.streak}🔥</span></div>
+        <div class="stat streak${app.mp ? ' hide-m' : ''}" title="Days in a row you've managed the club"><span class="label">Streak</span><span class="v">${s.calendar.streak}🔥</span></div>
+        ${app.mp ? `<a class="btn" href="${esc(mpLobbyUrl())}" title="Back to this league's table in the game hub">← Hub</a>` : ''}
       </div>
     </div></header>
     <div class="ad-row">${adSlot('top')}</div>
@@ -840,7 +841,7 @@ ACTIONS.start = () => {
 const mpMe = () => app.mp?.hub.user?.id;
 const MP_HT_CATCHUP_MS = 45e3; // a late viewer jumps to half time when the break closes in less than this
 function mpIsReady() { return !!app.mp && app.mp.ready.includes(mpMe()); }
-function mpLobbyUrl() { return app.mp.hub.origin + '/?room=' + encodeURIComponent(app.mp.room.code); }
+function mpLobbyUrl() { return app.mp.hub.returnUrl || app.mp.hub.origin + '/?room=' + encodeURIComponent(app.mp.room.code); }
 // Keep the launch fragment in the address bar while moving between screens, so a reload rejoins the league.
 function mpKeepLaunch() { try { history.replaceState(null, '', '#' + app.mp.launch + '&v=' + app.view); } catch (e) {} }
 function mpHeroRow() {
