@@ -56,7 +56,7 @@ export async function runRules(rules, ev) {
   const players = room.players || [];
   const ctx = {
     state, opts: room.opts || {}, seed: room.seed, round: room.round, code: room.code, hostId: room.hostId, startedAt: room.startedAt,
-    players: players.map((p) => ({ id: p.id, name: p.name })), mem: {},
+    players: players.map((p) => ({ id: p.id, name: p.name, opts: p.opts ?? {} })), mem: {},
     now: () => ev.now ?? Date.now(),
     connected: (id) => !!players.find((p) => p.id === id)?.connected,
     send: (to, msg) => out.push({ to, msg }),

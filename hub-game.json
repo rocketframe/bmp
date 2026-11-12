@@ -46,18 +46,6 @@
       "default": 24
     },
     {
-      "key": "seasons",
-      "label": "Seasons",
-      "type": "choice",
-      "choices": [
-        1,
-        2,
-        3,
-        4,
-        5
-      ]
-    },
-    {
       "key": "hourUtc",
       "label": "Hour (UTC)",
       "type": "int",
@@ -65,11 +53,39 @@
       "max": 23,
       "default": 0,
       "hidden": true
+    },
+    {
+      "key": "clubsPerDivision",
+      "label": "Clubs per division",
+      "type": "int",
+      "min": 16,
+      "max": 20,
+      "default": 18
     }
   ],
   "score": {
-    "label": "League points",
+    "label": "Manager points",
     "order": "desc",
     "format": "points"
-  }
+  },
+  "playerOptions": [
+    {
+      "key": "startDiv",
+      "label": "Start in",
+      "type": "choice",
+      "choices": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "names": {
+        "1": "Crown League",
+        "2": "Shield League",
+        "3": "County League",
+        "4": "District League"
+      },
+      "default": 1
+    }
+  ]
 }

@@ -5,14 +5,16 @@
 // A matchday starts when every manager has pressed "ready", or at the deadline, whichever is first.
 // It is played live: all matches kick off together, managers make half-time changes, the server plays
 // the second half with everyone's changes, and the results become official at full time.
+// A league has no last season: it runs until every manager has left. The host picks the clubs per division
+// (option clubsPerDivision), and each manager picks the division they start in (player option startDiv).
 import * as L from '../js/server/league.js';
 
 const HOUR = 3600e3;
 
 export default {
   start(ctx) {
-    const managers = ctx.players.map((p) => ({ id: p.id, name: p.name }));
-    ctx.state.league = L.createLeague(ctx.seed, managers);
+    const managers = ctx.players.map((p) => ({ id: p.id, name: p.name, startDiv: p.opts?.startDiv }));
+    ctx.state.league = L.createLeague(ctx.seed, managers, { clubsPerDivision: ctx.opts.clubsPerDivision });
     ctx.state.ready = {};
     schedule(ctx);
     pushAll(ctx, { k: 'started' });
@@ -44,7 +46,7 @@ export default {
 
   join(ctx, pid) {
     const p = ctx.players.find((x) => x.id === pid);
-    const res = L.joinClub(ctx.state.league, pid, p?.name ?? 'Manager');
+    const res = L.joinClub(ctx.state.league, pid, p?.name ?? 'Manager', p?.opts?.startDiv);
     if (res?.ok) ctx.broadcast({ k: 'joined', pid, clubId: res.clubId });
   },
 
@@ -111,7 +113,7 @@ function fullTime(ctx) {
   const s = ctx.state;
   const digest = L.advanceDay(s.league);
   s.ready = {};
-  if (L.seasonsPlayed(s.league) >= ctx.opts.seasons) return end(ctx);
+  s.lastDigest = digest;
   schedule(ctx);
   pushAll(ctx, { k: 'day', digest, nextAt: s.nextAt });
 }
@@ -123,7 +125,11 @@ function pushAll(ctx, extra) {
   if (extra) ctx.broadcast(extra);
 }
 
+// Every manager has left: send the final state, then the result goes to the hub's leaderboard.
 function end(ctx) {
+  ctx.clearTimer('matchday'); ctx.clearTimer('ht'); ctx.clearTimer('ft');
+  ctx.state.nextAt = null;
+  pushAll(ctx, { k: 'day', digest: ctx.state.lastDigest ?? null, nextAt: null, final: true });
   const table = L.standings(ctx.state.league); // [{ id, place, points }]
   ctx.finish({ valid: true, players: ctx.players.map((p) => {
     const row = table.find((r) => r.id === p.id);
