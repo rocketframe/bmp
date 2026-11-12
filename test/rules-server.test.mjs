@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { runRules, rulesRoom, handleHubRequest } from '../server/rules-server.js';
 import rules from '../server/rules.js';
 
-const room = { code: 'ABCDE', round: 1, seed: 42, opts: { pace: 'ready', deadlineHours: 24, hourUtc: 0, seasons: 1 }, hostId: 'u1',
-  players: [{ id: 'u1', name: 'Ana', connected: true }, { id: 'u2', name: 'Ben', connected: true }] };
+const room = { code: 'ABCDE', round: 1, seed: 42, opts: { pace: 'ready', deadlineHours: 24, hourUtc: 0, clubsPerDivision: 16 }, hostId: 'u1',
+  players: [{ id: 'u1', name: 'Ana', connected: true, opts: { startDiv: 1 } }, { id: 'u2', name: 'Ben', connected: true, opts: { startDiv: 3 } }] };
 
 test('a league starts, checks commands per manager and kicks off when everyone is ready', async () => {
   const now = Date.UTC(2026, 10, 11, 12);
@@ -49,4 +49,52 @@ test('stateful mode keeps the league in the Durable Object and only checks signe
   assert.ok(data.get('state').league);
   const snap = await (await call({ event: 'snapshot', pid: 'u1' })).json();
   assert.equal(snap.reply.k, 'state');
+});
+
+const divOf = (league, pid) => {
+  const cid = Object.entries(league.mgrs).find(([, m]) => m.managerId === pid)?.[0];
+  return league.divisions.findIndex((d) => d.clubIds.includes(cid)) + 1;
+};
+
+test('the host picks clubs per division and each manager picks a starting division', async () => {
+  const r = await runRules(rules, { event: 'start', room, now: Date.now(), state: {} });
+  assert.ok(r.state.league.divisions.every((d) => d.clubIds.length === 16), 'clubsPerDivision reaches createLeague');
+  assert.equal(divOf(r.state.league, 'u1'), 1);
+  assert.equal(divOf(r.state.league, 'u2'), 3);
+  // a manager who joins mid-league gets a club in the division they picked
+  const players = [...room.players, { id: 'u3', name: 'Cem', connected: true, opts: { startDiv: 4 } }];
+  const j = await runRules(rules, { event: 'join', room: { ...room, players }, now: Date.now(), state: r.state, pid: 'u3', name: 'Cem' });
+  assert.equal(divOf(j.state.league, 'u3'), 4);
+});
+
+test('a league has no last season and ends, with a final push, only when every manager has left', async () => {
+  const now = Date.now();
+  let r = await runRules(rules, { event: 'start', room, now, state: {} });
+  // play past a whole season: the league must keep going
+  r.state.league.season += 5;
+  for (const t of ['matchday', 'ht', 'ft']) {
+    r = await runRules(rules, { event: 'timer', room, now, state: r.state, name: t });
+    assert.ok(!r.finish, `no finish after ${t}`);
+  }
+  assert.ok(r.out.some((o) => o.msg.k === 'day'));
+  r = await runRules(rules, { event: 'leave', room, now, state: r.state, pid: 'u1' });
+  assert.ok(!r.finish, 'one manager is still there');
+  r = await runRules(rules, { event: 'leave', room: { ...room, players: room.players.slice(1) }, now, state: r.state, pid: 'u2' });
+  assert.ok(r.finish, 'the league ends when the last manager leaves');
+  const last = r.out.findIndex((o) => o.msg.k === 'day' && o.msg.final);
+  assert.ok(last >= 0, 'the final state is pushed before the result');
+  assert.ok(r.out.slice(0, last).some((o) => o.msg.k === 'state'), 'each remaining player gets their final view');
+});
+
+test('the manifest offers what the league supports', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const L = await import('../js/server/league.js');
+  const m = JSON.parse(await readFile(new URL('../hub-game.json', import.meta.url), 'utf8'));
+  assert.ok(!m.options.some((o) => o.key === 'seasons'), 'no seasons option');
+  const c = m.options.find((o) => o.key === 'clubsPerDivision');
+  assert.deepEqual([c.min, c.max, c.default], [L.OPTIONS.clubsPerDivision.min, L.OPTIONS.clubsPerDivision.max, L.OPTIONS.clubsPerDivision.default]);
+  const sd = m.playerOptions.find((o) => o.key === 'startDiv');
+  assert.deepEqual(sd.choices, L.OPTIONS.divisions.map((d) => d.tier));
+  assert.deepEqual(Object.values(sd.names), L.OPTIONS.divisions.map((d) => d.name));
+  assert.equal(m.score.label, 'Manager points');
 });
