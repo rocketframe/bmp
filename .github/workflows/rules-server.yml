@@ -1,0 +1,45 @@
+# Deploys bmp's league rules server for the Rocketframe Hub (server/), so rule changes go live from this repo
+# without any change to the hub.
+#   - Every pull request: deploy to STAGING (https://bmp-rules-staging.rocketframe.workers.dev), used by the staging hub.
+#   - Every merge to main: deploy to LIVE (https://bmp-rules.rocketframe.workers.dev).
+# Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, plus the hub's secret for bmp
+# (shown on the hub's /admin.html): HUB_GAME_SECRET for live and HUB_GAME_SECRET_STAGING for staging.
+name: Rules server
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: rules-server-${{ github.event_name == 'pull_request' && 'staging' || 'live' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      TARGET: ${{ github.event_name == 'pull_request' && 'staging' || 'live' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test
+        run: node --test test/*.test.mjs
+      - name: Deploy
+        working-directory: server
+        run: |
+          if [ "$TARGET" = staging ]; then ENVF="--env staging"; SECRET="$SECRET_STAGING"; else ENVF=""; SECRET="$SECRET_LIVE"; fi
+          npx --yes wrangler@4.160.0 deploy $ENVF
+          if [ -n "$SECRET" ]; then echo "$SECRET" | npx --yes wrangler@4.160.0 secret put HUB_GAME_SECRET $ENVF; else echo "::warning::No hub secret set for $TARGET yet; the hub's requests will be refused until it is."; fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SECRET_LIVE: ${{ secrets.HUB_GAME_SECRET }}
+          SECRET_STAGING: ${{ secrets.HUB_GAME_SECRET_STAGING }}

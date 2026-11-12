@@ -1,0 +1,19 @@
+name = "bmp-rules"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RulesRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RulesRoom"]
+
+# Staging: used by the staging hub through the multiplayer preview's hub-game.json.
+[env.staging]
+name = "bmp-rules-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RulesRoom"
