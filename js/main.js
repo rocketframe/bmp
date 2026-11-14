@@ -664,7 +664,8 @@ function watchMatch(replay = null, live = false) {
         <div class="seg" id="m-cam">${[['broadcast', 'TV'], ['tactical', 'Tactical']].map(([v, l]) => `<button data-cam="${v}" class="${app.prefs.camera === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         <button class="btn small" id="m-snd" title="Stadium sound">${app.prefs.sound ? '🔊' : '🔇'}</button>
         ${app.voice.ok ? `<button class="btn small" id="m-voice" title="Commentary voice">${app.prefs.voice !== false ? '🎙️' : '🎙️✕'}</button>` : ''}
-        ${live ? '<button class="btn small" id="m-tohalf" title="Catch up so you can make your half-time changes in time">Jump to half time</button>' : '<button class="btn small" id="m-skip">Skip to full time</button>'}
+        ${live ? '<button class="btn small" id="m-tohalf" title="Catch up so you can make your half-time changes in time">Jump to half time</button>' : ''}
+        <button class="btn small" id="m-skip" ${live ? 'style="display:none"' : ''}>Skip to full time</button>
       </div>
     </div>
     <aside class="feed"><div class="feed-h"><div class="label">${esc(Pk.cstadium(H))}</div><b>${esc(home.name)} v ${esc(away.name)}</b></div>
@@ -780,7 +781,8 @@ function fulltime(el, view, watched, replay = null) {
     if (!e.target.closest('#ft-go')) return;
     view.destroy(); el.remove(); document.body.style.overflow = '';
     app.audio.disable(); app.voice.stop();
-    if (replay) mpShowMatchResult(replay); else finishMatchday(watched);
+    // shared league: the office behind the match was not redrawn while it played (phase, results), so redraw it
+    if (replay) { if (app.mp) render(); mpShowMatchResult(replay); } else finishMatchday(watched);
   });
 }
 
@@ -946,6 +948,8 @@ function mpApplySecond() {
   ch.forEach((c, k) => { if (c?.subs?.length) { const dec = decoratedSheet({ ...r.sheets[k], bench: r.ht.teams[k].bench.map(b => ({ ...b })) }); view.sheets[k].bench = dec.bench.concat(view.sheets[k].bench || []); } });
   view.replaceSecondHalf(r);
   ch.forEach((c, k) => { if (c?.formation) view.applyFormation(k, c.formation); });
+  // the second half is decided now, so nothing is lost by skipping to full time
+  const skip = $('#m-skip', lv.el); if (skip) skip.style.display = '';
   const wait = Math.max(0, (L?.secondAt || 0) - app.mp.room.serverNow());
   setTimeout(() => { if (!lv.view.destroyed) lv.view.resume(); }, wait);
 }
