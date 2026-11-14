@@ -3,6 +3,8 @@
 // repo alone. Clients send commands; the server checks them with the same dispatch() the single-player
 // game uses, so a modified client can't cheat. The hub keeps the room, timers and leaderboard.
 // A matchday starts when every manager has pressed "ready", or at the deadline, whichever is first.
+// A manager who leaves (or is dropped by the hub) is still waited for until they come back or the
+// deadline passes: the others can't play the matchday without them just by pressing ready.
 // It is played live: all matches kick off together, managers make half-time changes, the server plays
 // the second half with everyone's changes, and the results become official at full time.
 // A league has no last season: it runs until every manager has left. The host picks the clubs per division
@@ -16,6 +18,7 @@ export default {
     const managers = ctx.players.map((p) => ({ id: p.id, name: p.name, startDiv: p.opts?.startDiv }));
     ctx.state.league = L.createLeague(ctx.seed, managers, { clubsPerDivision: ctx.opts.clubsPerDivision });
     ctx.state.ready = {};
+    ctx.state.waitFor = {};
     schedule(ctx);
     pushAll(ctx, { k: 'started' });
   },
@@ -25,14 +28,14 @@ export default {
     if (d.k === 'cmd') {
       const res = L.apply(s.league, pid, d.cmd ?? {});
       ctx.send(pid, { k: 'cmdResult', id: d.id ?? null, res });
-      if (res?.ok) ctx.send(pid, { k: 'state', view: L.viewFor(s.league, pid), ready: readyList(s), nextAt: s.nextAt });
+      if (res?.ok) ctx.send(pid, stateMsg(ctx, pid));
       return !!res?.ok;
     }
     if (d.k === 'ready') {
       if (s.league.live) return false; // a matchday is being played
       if (d.ready) s.ready[pid] = true; else delete s.ready[pid];
-      ctx.broadcast({ k: 'ready', ready: readyList(s) });
-      if (L.managerIds(s.league).every((id) => s.ready[id])) kickoff(ctx);
+      ctx.broadcast({ k: 'ready', ready: readyList(s), away: awayList(s) });
+      if (allReady(s)) kickoff(ctx);
       return true;
     }
     if (d.k === 'ht') {
@@ -41,20 +44,24 @@ export default {
       if (res?.ok && res.allIn) secondHalf(ctx);
       return !!res?.ok;
     }
+    if (d.k === 'rejoin') {
+      // a manager back in the room without a club (the hub dropped them): give them their club back
+      if (!L.viewFor(s.league, pid) && ctx.players.some((x) => x.id === pid) && rejoin(ctx, pid)) return true;
+      ctx.send(pid, stateMsg(ctx, pid)); // nothing to get back: the client shows what it has
+      return false;
+    }
     return false;
   },
 
-  join(ctx, pid) {
-    const p = ctx.players.find((x) => x.id === pid);
-    const res = L.joinClub(ctx.state.league, pid, p?.name ?? 'Manager', p?.opts?.startDiv);
-    if (res?.ok) ctx.broadcast({ k: 'joined', pid, clubId: res.clubId });
-  },
+  join(ctx, pid) { rejoin(ctx, pid); },
 
   leave(ctx, pid) {
-    L.leaveClub(ctx.state.league, pid);
+    const wasManager = L.leaveClub(ctx.state.league, pid)?.ok;
     delete ctx.state.ready[pid];
-    ctx.broadcast({ k: 'left', pid });
     if (L.managerIds(ctx.state.league).length === 0) return end(ctx);
+    if (wasManager) (ctx.state.waitFor ??= {})[pid] = true; // waited for until they're back or the deadline
+    ctx.broadcast({ k: 'left', pid });
+    ctx.broadcast({ k: 'ready', ready: readyList(ctx.state), away: awayList(ctx.state) });
     // the one who left may have been the last manager the half-time break was waiting for
     if (L.halftimeComplete(ctx.state.league)) secondHalf(ctx);
   },
@@ -66,11 +73,36 @@ export default {
   },
 
   snapshot(ctx, pid) {
-    return { k: 'state', view: L.viewFor(ctx.state.league, pid), ready: readyList(ctx.state), nextAt: ctx.state.nextAt };
+    return stateMsg(ctx, pid);
   },
 };
 
 function readyList(s) { return Object.keys(s.ready); }
+// Managers who left and are still waited for: [{ id, name }].
+function awayList(s) {
+  return Object.keys(s.waitFor ?? {}).map((id) => ({ id, name: s.league.mp.away[id]?.slot?.managerName ?? 'Manager' }));
+}
+// Every manager in the league is ready, and nobody who left is still waited for.
+function allReady(s) {
+  return L.managerIds(s.league).every((id) => s.ready[id]) && awayList(s).length === 0;
+}
+function stateMsg(ctx, pid) {
+  const s = ctx.state;
+  return { k: 'state', view: L.viewFor(s.league, pid), ready: readyList(s), away: awayList(s), nextAt: s.nextAt };
+}
+
+// Someone joins mid-league or comes back: their old club if it is still free, otherwise a new one.
+function rejoin(ctx, pid) {
+  const s = ctx.state;
+  const p = ctx.players.find((x) => x.id === pid);
+  const res = L.joinClub(s.league, pid, p?.name ?? 'Manager', p?.opts?.startDiv);
+  if (!res?.ok) return false;
+  if (s.waitFor) delete s.waitFor[pid];
+  ctx.broadcast({ k: 'joined', pid, clubId: res.clubId });
+  pushAll(ctx);
+  ctx.broadcast({ k: 'ready', ready: readyList(s), away: awayList(s) });
+  return true;
+}
 
 function schedule(ctx) {
   const now = ctx.now();
@@ -93,6 +125,7 @@ function kickoff(ctx) {
   if (s.league.live) return;
   ctx.clearTimer('matchday');
   s.ready = {};
+  s.waitFor = {}; // the deadline has passed for anyone who left: their club is the computer's now
   const { htCloseAt } = L.startMatchday(s.league, ctx.now());
   ctx.setTimer('ht', htCloseAt);
   pushAll(ctx, { k: 'kickoff' });
@@ -120,7 +153,7 @@ function fullTime(ctx) {
 
 function pushAll(ctx, extra) {
   for (const p of ctx.players) {
-    ctx.send(p.id, { k: 'state', view: L.viewFor(ctx.state.league, p.id), ready: readyList(ctx.state), nextAt: ctx.state.nextAt });
+    ctx.send(p.id, stateMsg(ctx, p.id));
   }
   if (extra) ctx.broadcast(extra);
 }

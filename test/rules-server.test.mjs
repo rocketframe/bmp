@@ -98,3 +98,49 @@ test('the manifest offers what the league supports', async () => {
   assert.deepEqual(Object.values(sd.names), L.OPTIONS.divisions.map((d) => d.name));
   assert.equal(m.score.label, 'Manager points');
 });
+
+test('a manager who left is waited for: the others cannot start the matchday alone, and they get their club back', async () => {
+  const now = Date.UTC(2026, 10, 14, 4);
+  let r = await runRules(rules, { event: 'start', room, now, state: {} });
+  const club = r.state.league.mp.managers.u2;
+  // u2 is dropped by the hub (left, or away too long); u1 comes back and presses ready
+  r = await runRules(rules, { event: 'leave', room, now, state: r.state, pid: 'u2', why: 'timeout' });
+  assert.deepEqual(r.out.findLast((o) => o.msg.k === 'ready').msg.away, [{ id: 'u2', name: 'Ben' }]);
+  r = await runRules(rules, { event: 'message', room, now, state: r.state, pid: 'u1', d: { k: 'ready', ready: true } });
+  assert.ok(!r.out.some((o) => o.msg.k === 'kickoff'), 'no kickoff while a manager who left is still waited for');
+  assert.ok(!r.state.league.live);
+  assert.equal(r.timers.matchday, undefined, 'the deadline still stands');
+
+  // u2 opens the game again: no club in the snapshot, so the client asks to rejoin and gets the same club
+  const snap = await runRules(rules, { event: 'snapshot', room, now, state: r.state, pid: 'u2' });
+  assert.equal(snap.reply.view, null);
+  r = await runRules(rules, { event: 'message', room, now, state: r.state, pid: 'u2', d: { k: 'rejoin' } });
+  assert.equal(r.state.league.mp.managers.u2, club, 'their old club back');
+  assert.ok(r.out.some((o) => o.to === 'u2' && o.msg.k === 'state' && o.msg.view?.mp.you === club));
+  assert.deepEqual(r.out.findLast((o) => o.msg.k === 'ready').msg.away, []);
+  assert.ok(!r.out.some((o) => o.msg.k === 'kickoff'), 'u2 has not ended their turn yet');
+  r = await runRules(rules, { event: 'message', room, now, state: r.state, pid: 'u2', d: { k: 'ready', ready: true } });
+  assert.ok(r.out.some((o) => o.msg.k === 'kickoff'), 'kickoff once both are ready');
+});
+
+test('the deadline still plays the matchday without a manager who left, and then stops waiting for them', async () => {
+  const now = Date.UTC(2026, 10, 14, 4);
+  let r = await runRules(rules, { event: 'start', room, now, state: {} });
+  r = await runRules(rules, { event: 'leave', room, now, state: r.state, pid: 'u2' });
+  r = await runRules(rules, { event: 'timer', room, now, state: r.state, name: 'matchday' });
+  assert.ok(r.out.some((o) => o.msg.k === 'kickoff'));
+  for (const t of ['ht', 'ft']) r = await runRules(rules, { event: 'timer', room, now, state: r.state, name: t });
+  r = await runRules(rules, { event: 'message', room, now, state: r.state, pid: 'u1', d: { k: 'ready', ready: true } });
+  assert.ok(r.out.some((o) => o.msg.k === 'kickoff'), 'after a deadline the league goes on at the pace of those still there');
+});
+
+test('a rejoin from someone not in the room, or still managing a club, changes nothing', async () => {
+  const now = Date.UTC(2026, 10, 14, 4);
+  const r = await runRules(rules, { event: 'start', room, now, state: {} });
+  let x = await runRules(rules, { event: 'message', room, now, state: r.state, pid: 'u1', d: { k: 'rejoin' } });
+  assert.equal(x.changed, false);
+  x = await runRules(rules, { event: 'message', room, now, state: r.state, pid: 'zz', d: { k: 'rejoin' } });
+  assert.equal(x.changed, false);
+  assert.ok(!x.state.league.mp.managers.zz);
+  assert.equal(x.out.find((o) => o.to === 'zz').msg.view, null);
+});
