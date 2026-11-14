@@ -341,7 +341,7 @@ export class MatchView {
     const team = e ? this.sheets[e.team] : null;
     const opp = e ? this.sheets[1 - e.team] : null;
     const nm = id => this.byId[id]?.name || this.findName(id) || '';
-    const txt = commentary(kind, { name: nm(e?.pid), assist: e?.assist ? nm(e.assist) : null, keeper: e?.keeper ? nm(e.keeper) : null, blocker: e?.blocker ? nm(e.blocker) : null, team: team?.name, opp: opp?.name, stadium: this.stadium, header: e?.header, penalty: e?.penalty, long: e?.long, over: e?.over, cleared: e?.cleared, second: e?.second, ...extra });
+    const txt = commentary(kind, { name: nm(e?.pid), assist: e?.assist ? nm(e.assist) : null, keeper: e?.keeper ? nm(e.keeper) : null, blocker: e?.blocker ? nm(e.blocker) : null, team: team?.name, opp: opp?.name, stadium: this.stadium, header: e?.header, penalty: e?.penalty, long: e?.long, over: e?.over, cleared: e?.cleared, second: e?.second, sc: e?.score, side: e?.team, min: e?.t, ...extra });
     if (this.card) this.card.line = `${this.clockLabel()}  ${txt}`;
     this.hooks.onCommentary?.(txt, kind, e, this.clockLabel());
   }
