@@ -1,0 +1,25 @@
+name: Story
+description: Something a player should be able to do or see
+labels: [story]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: Story
+      description: Who wants what, and why.
+      placeholder: As a player I want to ... so that ...
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: How we can tell it works. One check per line.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Screens, links, related issues (e.g. rocketframe/game-hub#12).

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Need a change in the hub?
+    url: https://github.com/rocketframe/game-hub/issues/new?template=hub-request.yml
+    about: Server, lobby or hub-client.js changes are filed in game-hub as a "Hub request".
