@@ -845,18 +845,20 @@ function mpLobbyUrl() { return app.mp.hub.returnUrl || app.mp.hub.origin + '/?ro
 // Keep the launch fragment in the address bar while moving between screens, so a reload rejoins the league.
 function mpKeepLaunch() { try { history.replaceState(null, '', '#' + app.mp.launch + '&v=' + app.view); } catch (e) {} }
 function mpHeroRow() {
-  const n = app.mp.ready.length, total = S().mp.managers.length;
+  const away = app.mp.away || [];
+  const n = app.mp.ready.length, total = S().mp.managers.length + away.length;
   const last = S().mp.lastMatch, L = S().mp.live;
   if (L) return `<button class="btn primary" data-act="mplive">▶ ${L.phase === 'first' ? 'Watch live' : 'Watch your match'}</button>
     <span class="sp"></span><div><div class="label">Matchday under way · ${L.phase === 'first' ? 'second half starts at the latest in' : 'results are official in'}</div><div class="countdown" data-countdown>${fmtDur(msToMidnight())}</div></div>`;
   return `<button class="btn ${mpIsReady() ? '' : 'primary'}" data-act="mpready">${mpIsReady() ? 'Not ready yet' : '✓ Ready for the matchday'}</button>
     ${last ? '<button class="btn ghost" data-act="mplast">Last matchday</button>' : ''}
-    <span class="sp"></span><div><div class="label">${n} of ${total} manager${total === 1 ? '' : 's'} ready · plays at the latest in</div><div class="countdown" data-countdown>${app.mp.nextAt ? fmtDur(msToMidnight()) : '--:--:--'}</div></div>`;
+    <span class="sp"></span><div><div class="label">${n} of ${total} manager${total === 1 ? '' : 's'} ready${away.length ? ` · waiting for ${esc(away.map(a => a.name).join(', '))} to come back` : ''} · plays at the latest in</div><div class="countdown" data-countdown>${app.mp.nextAt ? fmtDur(msToMidnight()) : '--:--:--'}</div></div>`;
 }
 function mpManagersCard() {
   const s = S();
   const rows = s.mp.managers.map(m => { const c = CL(m.clubId); const r = c ? G.computeTable(s, c.divisionId).find(x => x.id === c.id) : null;
-    return `<tr class="${m.clubId === me().id ? 'me' : ''}"><td>${app.mp.ready.includes(m.id) ? '<span class="chip ok">Ready</span>' : '<span class="chip">Busy</span>'}</td><td><b>${esc(m.name)}</b></td><td>${c ? `<span class="pl">${crest(cv(c), 18)}${cs(c)}</span>` : ''}</td><td class="n">${r ? G.ordinal(r.pos) : ''}</td></tr>`; }).join('');
+    return `<tr class="${m.clubId === me().id ? 'me' : ''}"><td>${app.mp.ready.includes(m.id) ? '<span class="chip ok">Ready</span>' : '<span class="chip">Busy</span>'}</td><td><b>${esc(m.name)}</b></td><td>${c ? `<span class="pl">${crest(cv(c), 18)}${cs(c)}</span>` : ''}</td><td class="n">${r ? G.ordinal(r.pos) : ''}</td></tr>`; }).join('')
+    + (app.mp.away || []).map(a => `<tr><td><span class="chip">Away</span></td><td><b>${esc(a.name)}</b></td><td class="muted">waited for until the deadline</td><td></td></tr>`).join('');
   return `<section class="card"><div class="card-h"><h3>Managers</h3><span class="label">Streak ${s.calendar.streak} · best ${s.calendar.bestStreak}</span></div>
     <table><tbody>${rows}</tbody></table>
     <p class="muted" style="margin:10px 0 0;font-size:14px">The matchday is played for everyone when all managers are ready, or at the deadline. If you are away, your assistant plays your match.</p></section>`;
@@ -956,6 +958,14 @@ function mpScreen(title, body, actions = '') {
 function mpOnGame(m) {
   const mp = app.mp; if (!mp) return;
   if (m.k === 'state') {
+    if (m.away) mp.away = m.away;
+    if (!m.view && !mp.rejoinTried) {
+      // the server dropped us from our club (we were away too long): ask for it back once
+      mp.rejoinTried = true; app.state = null;
+      mpScreen('Getting your club back…', 'Rejoining the league.');
+      mp.room.sendGame({ k: 'rejoin' });
+      return;
+    }
     if (!m.view) { app.state = null; mpScreen('No club for you here', 'You are not managing a club in this league.', `<a class="btn primary" href="${esc(mpLobbyUrl())}">Back to the lobby</a>`); return; }
     const old = app.state;
     if (old?.today && m.view.today && old.calendar.day === m.view.calendar.day) { m.view.today.teamSet ||= old.today.teamSet; m.view.today.marketSeen ||= old.today.marketSeen; }
@@ -973,6 +983,7 @@ function mpOnGame(m) {
     else if (r.msg || p?.okMsg) toast(r.msg || p.okMsg, 'ok');
   } else if (m.k === 'ready') {
     mp.ready = m.ready || [];
+    if (m.away) mp.away = m.away;
     if (app.state && app.view === 'today' && !$('.match') && !$('.modal-back')) render();
   } else if (m.k === 'day') {
     if (m.nextAt !== undefined) mp.nextAt = m.nextAt;
@@ -1020,7 +1031,7 @@ async function bootHub() {
   const hub = Hub.fromLaunch('#' + params.toString());
   if (!hub) return fallback('That league link is incomplete. Playing single player instead.');
   const room = hub.joinRoom(hub.launch.room);
-  app.mp = { hub, room, launch: params.toString(), ready: [], nextAt: null, seq: 0, pending: {} };
+  app.mp = { hub, room, launch: params.toString(), ready: [], away: [], nextAt: null, seq: 0, pending: {} };
   app.view = VIEWS[v] ? v : 'today';
   room.on('game', mpOnGame);
   room.on('fail', () => fallback('That league is not available any more. Playing single player instead.'));
