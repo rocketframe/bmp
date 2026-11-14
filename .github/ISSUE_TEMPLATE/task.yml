@@ -1,0 +1,16 @@
+name: Task
+description: Technical work with no direct change players would notice
+labels: [task]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What and why
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      placeholder: |
+        - [ ] ...
