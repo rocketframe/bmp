@@ -1477,7 +1477,7 @@ export class MatchView {
     if (own && !own.off) this.drawLabel(ctx, own);
     if (this.celebFocus && !this.replay) this.drawLabel(ctx, this.celebFocus, true);
 
-    this.drawWeather(ctx);
+    this.drawWeather(ctx, dtR);
     // lighting & vignette
     const vg = ctx.createRadialGradient(W / 2, H * 0.55, H * 0.3, W / 2, H * 0.55, Math.max(W, H) * 0.8);
     vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, this.g3 ? (night ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.12)') : night ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.25)');
@@ -1842,7 +1842,7 @@ export class MatchView {
     ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.stroke();
   }
 
-  drawWeather(ctx) {
+  drawWeather(ctx, dt = 0.016) {
     if (this.weather === 'clear') return;
     const W = this.W, H = this.H;
     if (this.weather === 'rain') {
@@ -1857,14 +1857,54 @@ export class MatchView {
       }
       ctx.stroke();
       ctx.fillStyle = 'rgba(120,140,170,0.08)'; ctx.fillRect(0, 0, W, H);
-    } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      for (const d of this.rain) {
-        d.y += 0.016 * 0.22 * d.s; d.x += Math.sin(this.time + d.s * 10) * 0.0006;
-        if (d.y > 1) { d.y = 0; d.x = Math.random(); }
-        ctx.beginPath(); ctx.arc(d.x * W, d.y * H, 1.2 + d.s * 1.4, 0, 7); ctx.fill();
-      }
+    } else this.drawSnow(ctx, W, H, dt);
+  }
+
+  // Snow: a light, layered fall that stays out of the way of the play.
+  // Far flakes are tiny, faint and slow; a few near ones are soft and out of
+  // focus. Purely visual (Math.random), never touches the sim RNG.
+  drawSnow(ctx, W, H, dt) {
+    if (!this.snow) {
+      const n = clamp(Math.round(W * H / 5500), 80, 260);
+      this.snow = Array.from({ length: n }, () => this.newFlake(Math.random()));
+      const c = document.createElement('canvas'); c.width = c.height = 32;
+      const g = c.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+      gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.35, 'rgba(255,255,255,0.75)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+      this.flakeImg = c;
     }
+    const t = this.time;
+    // slow shared breeze with the odd gust; nearer flakes move more (parallax)
+    const wind = 5 + 4 * Math.sin(t * 0.11) + 2.5 * Math.sin(t * 0.37 + 1.3);
+    const img = this.flakeImg, prev = ctx.globalAlpha;
+    for (const f of this.snow) {
+      f.y += (f.v * dt) / H;
+      f.x += ((wind * f.d + Math.cos(t * f.w + f.p) * f.a) * dt) / W;
+      if (f.y > 1.03) { f.y = rand(-0.03, 0); f.x = Math.random(); }
+      if (f.x > 1.03) f.x -= 1.06; else if (f.x < -0.03) f.x += 1.06;
+      const r = f.r;
+      ctx.globalAlpha = f.o;
+      ctx.drawImage(img, f.x * W - r, f.y * H - r, r * 2, r * 2);
+    }
+    ctx.globalAlpha = prev;
+    // faint cold haze, a touch thicker towards the far stand
+    const hz = ctx.createLinearGradient(0, 0, 0, H);
+    hz.addColorStop(0, this.night ? 'rgba(170,185,210,0.07)' : 'rgba(225,232,242,0.10)');
+    hz.addColorStop(0.5, this.night ? 'rgba(170,185,210,0.025)' : 'rgba(225,232,242,0.04)');
+    hz.addColorStop(1, 'rgba(225,232,242,0)');
+    ctx.fillStyle = hz; ctx.fillRect(0, 0, W, H);
+  }
+
+  // depth d: 0 far .. 1 near. Most flakes are far away and barely visible.
+  newFlake(y = 0) {
+    const u = Math.random(), d = u < 0.62 ? rand(0, 0.35) : u < 0.93 ? rand(0.35, 0.75) : rand(0.85, 1);
+    return {
+      x: Math.random(), y, d,
+      r: d < 0.35 ? rand(1.1, 1.7) : d < 0.75 ? rand(1.8, 2.7) : rand(3.4, 5), // sprite radius (soft edge, so drawn dot is ~half)
+      o: d < 0.35 ? rand(0.35, 0.55) : d < 0.75 ? rand(0.5, 0.7) : rand(0.16, 0.26), // near ones are out of focus
+      v: 10 + d * 48 + rand(-3, 3), // px/s fall speed
+      a: 3 + d * 9, w: rand(0.5, 1.4), p: rand(0, 6.3), // sway amplitude (px/s), freq, phase
+    };
   }
 
   spawnConfetti(kit) {
